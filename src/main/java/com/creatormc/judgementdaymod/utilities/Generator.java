@@ -133,56 +133,6 @@ public class Generator {
                             }
                         }
 
-                        // --- BORDI: estende l’evaporazione ai chunk vicini ---
-                        // todo rimuovere se si trova soluzione migliore, attualmente
-                        // funzionante ma non bellissima perchè sovrascrive i chunk vicini
-                        if (lx == 0 || lx == 15 || lz == 0 || lz == 15) {
-                            int neighborChunkX = chunkX;
-                            int neighborChunkZ = chunkZ;
-                            int neighborLocalX = lx;
-                            int neighborLocalZ = lz;
-
-                            if (lx == 0) {
-                                neighborChunkX = chunkX - 1;
-                                neighborLocalX = 15;
-                            } else if (lx == 15) {
-                                neighborChunkX = chunkX + 1;
-                                neighborLocalX = 0;
-                            }
-
-                            if (lz == 0) {
-                                neighborChunkZ = chunkZ - 1;
-                                neighborLocalZ = 15;
-                            } else if (lz == 15) {
-                                neighborChunkZ = chunkZ + 1;
-                                neighborLocalZ = 0;
-                            }
-
-                            if (level.hasChunk(neighborChunkX, neighborChunkZ)) {
-                                LevelChunk neighborChunk = level.getChunk(neighborChunkX, neighborChunkZ);
-                                LevelChunkSection[] neighSections = neighborChunk.getSections();
-                                int neighMinSection = neighborChunk.getMinSection();
-
-                                for (int removeY = maxBuildHeight - 1; removeY >= minBuildHeight; removeY--) {
-                                    int secIndexNb = (removeY >> 4) - neighMinSection;
-                                    if (secIndexNb < 0 || secIndexNb >= neighSections.length)
-                                        continue;
-                                    LevelChunkSection nbSection = neighSections[secIndexNb];
-                                    if (nbSection == null)
-                                        continue;
-
-                                    int lyNb = removeY & 15;
-                                    BlockState stateNb = nbSection.getBlockState(neighborLocalX, lyNb, neighborLocalZ);
-                                    if (Analyzer.isEvaporable(stateNb)) {
-                                        nbSection.setBlockState(neighborLocalX, lyNb, neighborLocalZ, airState, false);
-                                        changedPositions.add(new BlockPos(
-                                                (neighborChunkX << 4) + neighborLocalX,
-                                                removeY,
-                                                (neighborChunkZ << 4) + neighborLocalZ));
-                                    }
-                                }
-                            }
-                        }
                     }
 
                     // --- TRASFORMAZIONE SUPERFICIALE ---
