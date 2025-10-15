@@ -104,9 +104,42 @@ public class Generator {
             // ripetute
             final int sectionsCount = sections.length;
 
+            // prima viene rimossa l'acqua, si itera da -1 per risolvere un problema sul
+            if (isApocalypseActive) {
+                for (int lx = 0; lx < 16; lx++) {
+                    for (int lz = 0; lz < 16; lz++) {
+                        int worldX = startX + lx;
+                        int worldZ = startZ + lz;
+
+                        // Coordinate locali nel chunk corrente
+                        int actualX = worldX & 15;
+                        int actualZ = worldZ & 15;
+
+                        for (int removeY = level.getMaxBuildHeight() - 1; removeY >= -10; removeY--) {
+                            int targetSecIndex = (removeY >> 4) - minSection;
+                            if (targetSecIndex < 0 || targetSecIndex >= sections.length)
+                                continue;
+
+                            LevelChunkSection targetSection = sections[targetSecIndex];
+                            if (targetSection == null)
+                                continue;
+
+                            int targetLy = removeY & 15;
+                            BlockState targetState = targetSection.getBlockState(actualX, targetLy, actualZ);
+
+                            if (Analyzer.isEvaporable(targetState)) {
+                                targetSection.setBlockState(actualX, targetLy, actualZ, airState, false);
+                                dirtySection[targetSecIndex] = true;
+                                changedPositions.add(new BlockPos(worldX, removeY, worldZ));
+                            }
+                        }
+                    }
+                }
+            }
 
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
+
                     // Ottimizzazione: confronto diretto più veloce
                     if (random.nextFloat() > apocalypseThreshold)
                         continue;
