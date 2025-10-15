@@ -1,0 +1,8 @@
+modLoader="javafml"
+loaderVersion="[47,48)"
+license="MIT"
+
+[[mods]]
+modId="judgementday"
+version="1.0.0"
+displayName="La Mia Prima Mod"
