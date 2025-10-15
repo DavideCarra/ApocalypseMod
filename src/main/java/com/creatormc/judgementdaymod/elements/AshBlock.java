@@ -28,7 +28,7 @@ public class AshBlock extends FallingBlock {
         super(BlockBehaviour.Properties.of()
                 .strength(0.05f, 0.05f) // Estremamente fragile
                 .sound(SoundType.SAND)
-                .lightLevel((state) -> 0) // Non emette luce
+                .lightLevel((state) -> 2) // Non emette luce
                 .speedFactor(0.7f) // Rallenta di più il movimento
                 .jumpFactor(0.9f) // Rende più difficile saltare
                 .friction(0.9f));

@@ -2,7 +2,6 @@ package com.creatormc.judgementdaymod.utilities;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 
 import com.creatormc.judgementdaymod.ModBlocks;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
@@ -22,14 +21,11 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.LightBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.material.Fluids;
-
-import java.lang.reflect.Field;
 
 public class Generator {
 
@@ -81,6 +77,7 @@ public class Generator {
             final int startZ = chunkZ << 4;
             final int minSection = lc.getMinSection();
             final int minBuildHeight = level.getMinBuildHeight();
+            final int maxBuildHeight = level.getMaxBuildHeight();
 
             // Cache delle blockstate più usate
             final BlockState ashState = ModBlocks.ASH_BLOCK.get().defaultBlockState();
@@ -104,18 +101,22 @@ public class Generator {
             // ripetute
             final int sectionsCount = sections.length;
 
+            // Ottimizzazione: cache del check per ash block
+            final Block ashBlock = ModBlocks.ASH_BLOCK.get();
+
             // prima viene rimossa l'acqua, si itera da -1 per risolvere un problema sul
-            if (isApocalypseActive) {
-                for (int lx = 0; lx < 16; lx++) {
-                    for (int lz = 0; lz < 16; lz++) {
-                        int worldX = startX + lx;
-                        int worldZ = startZ + lz;
+            // (fuso con le trasformazioni superficiali nello stesso doppio ciclo lx/lz)
+            for (int lx = 0; lx < 16; lx++) {
+                for (int lz = 0; lz < 16; lz++) {
+                    final int worldX = startX + lx;
+                    final int worldZ = startZ + lz;
 
-                        // Coordinate locali nel chunk corrente
-                        int actualX = worldX & 15;
-                        int actualZ = worldZ & 15;
+                    // Coordinate locali nel chunk corrente
+                    final int actualX = worldX & 15;
+                    final int actualZ = worldZ & 15;
 
-                        for (int removeY = level.getMaxBuildHeight() - 1; removeY >= -10; removeY--) {
+                    if (isApocalypseActive) {
+                        for (int removeY = maxBuildHeight - 1; removeY >= minBuildHeight; removeY--) {
                             int targetSecIndex = (removeY >> 4) - minSection;
                             if (targetSecIndex < 0 || targetSecIndex >= sections.length)
                                 continue;
@@ -134,91 +135,83 @@ public class Generator {
                             }
                         }
                     }
-                }
-            }
-
-            for (int lx = 0; lx < 16; lx++) {
-                for (int lz = 0; lz < 16; lz++) {
 
                     // Ottimizzazione: confronto diretto più veloce
-                    if (random.nextFloat() > apocalypseThreshold)
-                        continue;
+                    if (random.nextFloat() <= apocalypseThreshold) {
 
-                    // Cache del valore heightmap per evitare ricalcoli
-                    int topY = wsHM.getFirstAvailable(lx, lz) - 1;
-                    if (topY < minBuildHeight)
-                        continue;
+                        // Cache del valore heightmap per evitare ricalcoli
+                        int topY = wsHM.getFirstAvailable(lx, lz) - 1;
+                        if (topY < minBuildHeight)
+                            continue;
 
-                    // Ottimizzazione: pre-calcola indici
-                    int secIndex = (topY >> 4) - minSection;
-                    if (secIndex < 0 || secIndex >= sectionsCount)
-                        continue;
+                        // Ottimizzazione: pre-calcola indici
+                        int secIndex = (topY >> 4) - minSection;
+                        if (secIndex < 0 || secIndex >= sectionsCount)
+                            continue;
 
-                    LevelChunkSection section = sections[secIndex];
-                    if (section == null || section.hasOnlyAir())
-                        continue;
+                        LevelChunkSection section = sections[secIndex];
+                        if (section == null || section.hasOnlyAir())
+                            continue;
 
-                    int ly = topY & 15;
-                    BlockState currentBlock = section.getBlockState(lx, ly, lz);
-                    if (currentBlock.isAir())
-                        continue;
+                        int ly = topY & 15;
+                        BlockState currentBlock = section.getBlockState(lx, ly, lz);
+                        if (currentBlock.isAir())
+                            continue;
 
-                    // Determina trasformazione con logica ottimizzata
-                    BlockState newState = ashState;
-                    int targetY = topY;
+                        // Determina trasformazione con logica ottimizzata
+                        BlockState newState = ashState;
+                        int targetY = topY;
 
-                    // Ottimizzazione: cache del check per ash block
-                    final Block ashBlock = ModBlocks.ASH_BLOCK.get();
+                        if (currentBlock.is(ashBlock)) {
+                            // Trova primo blocco non-cenere scendendo
+                            for (int y = topY - 1; y > minBuildHeight; y--) {
+                                final int checkSecIndex = (y >> 4) - minSection;
+                                if (checkSecIndex < 0 || checkSecIndex >= sectionsCount)
+                                    break;
 
-                    if (currentBlock.is(ashBlock)) {
-                        // Trova primo blocco non-cenere scendendo
-                        for (int y = topY - 1; y > minBuildHeight; y--) {
-                            final int checkSecIndex = (y >> 4) - minSection;
-                            if (checkSecIndex < 0 || checkSecIndex >= sectionsCount)
-                                break;
+                                final LevelChunkSection checkSection = sections[checkSecIndex];
+                                if (checkSection == null || checkSection.hasOnlyAir())
+                                    continue;
 
-                            final LevelChunkSection checkSection = sections[checkSecIndex];
-                            if (checkSection == null || checkSection.hasOnlyAir())
-                                continue;
+                                final int checkLy = y & 15;
+                                BlockState foundBlock = checkSection.getBlockState(lx, checkLy, lz);
 
-                            final int checkLy = y & 15;
-                            BlockState foundBlock = checkSection.getBlockState(lx, checkLy, lz);
-
-                            if (!foundBlock.is(ashBlock)) {
-                                targetY = y;
-                                // Determina il tipo di trasformazione inline
-                                if (Analyzer.canBurn(foundBlock, null, null)) {
-                                    newState = fireState;
-                                } else if (Analyzer.isEvaporable(foundBlock)) {
-                                    newState = airState;
-                                } else {
-                                    newState = ashState;
+                                if (!foundBlock.is(ashBlock)) {
+                                    targetY = y;
+                                    // Determina il tipo di trasformazione inline
+                                    if (Analyzer.canBurn(foundBlock, null, null)) {
+                                        newState = fireState;
+                                    } else if (Analyzer.isEvaporable(foundBlock)) {
+                                        newState = airState;
+                                    } else {
+                                        newState = ashState;
+                                    }
+                                    break;
                                 }
-                                break;
+                            }
+                            if (targetY == topY)
+                                continue; // Nessun blocco trovato
+                        } else {
+                            // Blocco non-ash: determina trasformazione diretta
+                            if (Analyzer.canBurn(currentBlock, null, null)) {
+                                newState = fireState;
+                            } else if (Analyzer.isEvaporable(currentBlock)) {
+                                newState = airState;
+                            } else {
+                                newState = ashState;
                             }
                         }
-                        if (targetY == topY)
-                            continue; // Nessun blocco trovato
-                    } else {
-                        // Blocco non-ash: determina trasformazione diretta
-                        if (Analyzer.canBurn(currentBlock, null, null)) {
-                            newState = fireState;
-                        } else if (Analyzer.isEvaporable(currentBlock)) {
-                            newState = airState;
-                        } else {
-                            newState = ashState;
-                        }
-                    }
 
-                    // Piazza il blocco con check ottimizzato
-                    int finalSecIndex = (targetY >> 4) - minSection;
-                    if (finalSecIndex >= 0 && finalSecIndex < sectionsCount) {
-                        LevelChunkSection targetSection = sections[finalSecIndex];
-                        if (targetSection != null) {
-                            int finalLy = targetY & 15;
-                            targetSection.setBlockState(lx, finalLy, lz, newState, false);
-                            dirtySection[finalSecIndex] = true;
-                            changedPositions.add(new BlockPos(startX + lx, targetY, startZ + lz));
+                        // Piazza il blocco con check ottimizzato
+                        int finalSecIndex = (targetY >> 4) - minSection;
+                        if (finalSecIndex >= 0 && finalSecIndex < sectionsCount) {
+                            LevelChunkSection targetSection = sections[finalSecIndex];
+                            if (targetSection != null) {
+                                int finalLy = targetY & 15;
+                                targetSection.setBlockState(lx, finalLy, lz, newState, false);
+                                dirtySection[finalSecIndex] = true;
+                                changedPositions.add(new BlockPos(startX + lx, targetY, startZ + lz));
+                            }
                         }
                     }
                 }
@@ -249,10 +242,12 @@ public class Generator {
 
                 if (state.getBlock() == ashBlockRef) {
                     level.scheduleTick(pos, ashBlockRef, tickDelay);
+
                 }
 
                 if (state.getBlock() == fireBlockRef) {
                     level.scheduleTick(pos, fireBlockRef, tickDelay);
+
                 }
 
                 if (state.getBlock() instanceof FallingBlock) {
