@@ -215,6 +215,8 @@ public class Generator {
 
                                 final int checkLy = y & 15;
                                 BlockState foundBlock = checkSection.getBlockState(lx, checkLy, lz);
+                                if (currentBlock.isAir())
+                                    continue;
 
                                 if (!foundBlock.is(ashBlock)) {
                                     targetY = y;
