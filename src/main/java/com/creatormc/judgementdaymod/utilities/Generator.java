@@ -8,6 +8,7 @@ import com.creatormc.judgementdaymod.models.ChunkToProcess;
 
 import io.netty.util.internal.ThreadLocalRandom;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -57,8 +58,6 @@ public class Generator {
         }
     }
 
-    // posso sopprimere il warning, la risorsa verrà chiusa da minecraft quando
-    // necessario
     @SuppressWarnings("resource")
     public static void processChunk(ChunkToProcess chunkInfo) {
         try {
@@ -110,11 +109,10 @@ public class Generator {
                 for (int lz = 0; lz < 16; lz++) {
                     final int worldX = startX + lx;
                     final int worldZ = startZ + lz;
-
-                    // Coordinate locali nel chunk corrente
                     final int actualX = worldX & 15;
                     final int actualZ = worldZ & 15;
 
+                    // --- EVAPORAZIONE ---
                     if (isApocalypseActive) {
                         for (int removeY = maxBuildHeight - 1; removeY >= minBuildHeight; removeY--) {
                             int targetSecIndex = (removeY >> 4) - minSection;
@@ -134,31 +132,73 @@ public class Generator {
                                 changedPositions.add(new BlockPos(worldX, removeY, worldZ));
                             }
                         }
+
+                        // --- BORDI: estende l’evaporazione ai chunk vicini ---
+                        // todo rimuovere se si trova soluzione migliore, attualmente
+                        // funzionante ma non bellissima perchè sovrascrive i chunk vicini
+                        if (lx == 0 || lx == 15 || lz == 0 || lz == 15) {
+                            int neighborChunkX = chunkX;
+                            int neighborChunkZ = chunkZ;
+                            int neighborLocalX = lx;
+                            int neighborLocalZ = lz;
+
+                            if (lx == 0) {
+                                neighborChunkX = chunkX - 1;
+                                neighborLocalX = 15;
+                            } else if (lx == 15) {
+                                neighborChunkX = chunkX + 1;
+                                neighborLocalX = 0;
+                            }
+
+                            if (lz == 0) {
+                                neighborChunkZ = chunkZ - 1;
+                                neighborLocalZ = 15;
+                            } else if (lz == 15) {
+                                neighborChunkZ = chunkZ + 1;
+                                neighborLocalZ = 0;
+                            }
+
+                            if (level.hasChunk(neighborChunkX, neighborChunkZ)) {
+                                LevelChunk neighborChunk = level.getChunk(neighborChunkX, neighborChunkZ);
+                                LevelChunkSection[] neighSections = neighborChunk.getSections();
+                                int neighMinSection = neighborChunk.getMinSection();
+
+                                for (int removeY = maxBuildHeight - 1; removeY >= minBuildHeight; removeY--) {
+                                    int secIndexNb = (removeY >> 4) - neighMinSection;
+                                    if (secIndexNb < 0 || secIndexNb >= neighSections.length)
+                                        continue;
+                                    LevelChunkSection nbSection = neighSections[secIndexNb];
+                                    if (nbSection == null)
+                                        continue;
+
+                                    int lyNb = removeY & 15;
+                                    BlockState stateNb = nbSection.getBlockState(neighborLocalX, lyNb, neighborLocalZ);
+                                    if (Analyzer.isEvaporable(stateNb)) {
+                                        nbSection.setBlockState(neighborLocalX, lyNb, neighborLocalZ, airState, false);
+                                        changedPositions.add(new BlockPos(
+                                                (neighborChunkX << 4) + neighborLocalX,
+                                                removeY,
+                                                (neighborChunkZ << 4) + neighborLocalZ));
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    // Ottimizzazione: confronto diretto più veloce
+                    // --- TRASFORMAZIONE SUPERFICIALE ---
                     if (random.nextFloat() <= apocalypseThreshold) {
-
-                        // Cache del valore heightmap per evitare ricalcoli
                         int topY = wsHM.getFirstAvailable(lx, lz) - 1;
                         if (topY < minBuildHeight)
                             continue;
 
-                        // Ottimizzazione: pre-calcola indici
                         int secIndex = (topY >> 4) - minSection;
                         if (secIndex < 0 || secIndex >= sectionsCount)
                             continue;
 
                         LevelChunkSection section = sections[secIndex];
-                        if (section == null || section.hasOnlyAir())
-                            continue;
 
                         int ly = topY & 15;
                         BlockState currentBlock = section.getBlockState(lx, ly, lz);
-                        if (currentBlock.isAir())
-                            continue;
-
-                        // Determina trasformazione con logica ottimizzata
                         BlockState newState = ashState;
                         int targetY = topY;
 
@@ -192,7 +232,6 @@ public class Generator {
                             if (targetY == topY)
                                 continue; // Nessun blocco trovato
                         } else {
-                            // Blocco non-ash: determina trasformazione diretta
                             if (Analyzer.canBurn(currentBlock, null, null)) {
                                 newState = fireState;
                             } else if (Analyzer.isEvaporable(currentBlock)) {
@@ -202,7 +241,6 @@ public class Generator {
                             }
                         }
 
-                        // Piazza il blocco con check ottimizzato
                         int finalSecIndex = (targetY >> 4) - minSection;
                         if (finalSecIndex >= 0 && finalSecIndex < sectionsCount) {
                             LevelChunkSection targetSection = sections[finalSecIndex];
@@ -231,7 +269,6 @@ public class Generator {
             lc.setUnsaved(true);
             Heightmap.primeHeightmaps(lc, lc.getStatus().heightmapsAfter());
 
-            // Ottimizzazione: usa batch update dove possibile
             final Block ashBlockRef = ModBlocks.ASH_BLOCK.get();
             final Block fireBlockRef = Blocks.FIRE;
             final int tickDelay = 40;
@@ -242,12 +279,10 @@ public class Generator {
 
                 if (state.getBlock() == ashBlockRef) {
                     level.scheduleTick(pos, ashBlockRef, tickDelay);
-
                 }
 
                 if (state.getBlock() == fireBlockRef) {
                     level.scheduleTick(pos, fireBlockRef, tickDelay);
-
                 }
 
                 if (state.getBlock() instanceof FallingBlock) {
@@ -262,7 +297,6 @@ public class Generator {
             ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(lc,
                     level.getLightEngine(), null, null);
 
-            // manda a tutti i player che hanno in vista questo chunk
             for (ServerPlayer viewer : level.players()) {
                 if (level.getChunkSource().chunkMap.getPlayers(lc.getPos(), false).contains(viewer)) {
                     viewer.connection.send(packet);
