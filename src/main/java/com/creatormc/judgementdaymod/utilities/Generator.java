@@ -75,7 +75,7 @@ public class Generator {
             final int startX = chunkX << 4;
             final int startZ = chunkZ << 4;
             final int minSection = lc.getMinSection();
-            final int minBuildHeight = level.getMinBuildHeight();
+            final int minBuildHeight = -10;
             final int maxBuildHeight = level.getMaxBuildHeight();
 
             // Cache delle blockstate più usate
@@ -127,11 +127,76 @@ public class Generator {
                             BlockState targetState = targetSection.getBlockState(actualX, targetLy, actualZ);
 
                             if (Analyzer.isEvaporable(targetState)) {
+                                // Rimuove il blocco corrente
                                 targetSection.setBlockState(actualX, targetLy, actualZ, airState, false);
                                 dirtySection[targetSecIndex] = true;
                                 changedPositions.add(new BlockPos(worldX, removeY, worldZ));
+
+                                // --- FIX MURI: se siamo su un bordo del chunk, svuota il blocco adiacente
+                                // nella sezione vicina --- todo, non bellissima in futuro valutare di sistemarla
+                                if (lx == 0 || lx == 15 || lz == 0 || lz == 15) {
+                                    // Vicino X
+                                    if (lx == 0 || lx == 15) {
+                                        int nx = worldX + (lx == 0 ? -1 : 1);
+                                        int neighborChunkX = nx >> 4;
+                                        int neighborChunkZ = worldZ >> 4;
+
+                                        if (level.hasChunk(neighborChunkX, neighborChunkZ)) {
+                                            LevelChunk neighborChunk = level.getChunk(neighborChunkX, neighborChunkZ);
+                                            int neighborSecIndex = (removeY >> 4) - neighborChunk.getMinSection();
+                                            if (neighborSecIndex >= 0
+                                                    && neighborSecIndex < neighborChunk.getSections().length) {
+                                                LevelChunkSection neighborSection = neighborChunk
+                                                        .getSections()[neighborSecIndex];
+                                                if (neighborSection != null) {
+                                                    int nxLocal = nx & 15;
+                                                    BlockState neighborState = neighborSection.getBlockState(nxLocal,
+                                                            removeY & 15, actualZ);
+                                                    if (Analyzer.isEvaporable(neighborState)) {
+                                                        neighborSection.setBlockState(nxLocal, removeY & 15, actualZ,
+                                                                airState, false);
+                                                        neighborSection.recalcBlockCounts();
+                                                        neighborChunk.setUnsaved(true);
+                                                        changedPositions.add(new BlockPos(nx, removeY, worldZ));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Vicino Z
+                                    if (lz == 0 || lz == 15) {
+                                        int nz = worldZ + (lz == 0 ? -1 : 1);
+                                        int neighborChunkX = worldX >> 4;
+                                        int neighborChunkZ = nz >> 4;
+
+                                        if (level.hasChunk(neighborChunkX, neighborChunkZ)) {
+                                            LevelChunk neighborChunk = level.getChunk(neighborChunkX, neighborChunkZ);
+                                            int neighborSecIndex = (removeY >> 4) - neighborChunk.getMinSection();
+                                            if (neighborSecIndex >= 0
+                                                    && neighborSecIndex < neighborChunk.getSections().length) {
+                                                LevelChunkSection neighborSection = neighborChunk
+                                                        .getSections()[neighborSecIndex];
+                                                if (neighborSection != null) {
+                                                    int nzLocal = nz & 15;
+                                                    BlockState neighborState = neighborSection.getBlockState(actualX,
+                                                            removeY & 15, nzLocal);
+                                                    if (Analyzer.isEvaporable(neighborState)) {
+                                                        neighborSection.setBlockState(actualX, removeY & 15, nzLocal,
+                                                                airState, false);
+                                                        neighborSection.recalcBlockCounts();
+                                                        neighborChunk.setUnsaved(true);
+                                                        changedPositions.add(new BlockPos(worldX, removeY, nz));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
+
                         }
+                        
 
                     }
 
@@ -206,6 +271,7 @@ public class Generator {
                     }
                 }
             }
+            
 
             // Early return se nessuna modifica
             if (changedPositions.isEmpty())
