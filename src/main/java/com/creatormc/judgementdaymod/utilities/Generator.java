@@ -109,8 +109,6 @@ public class Generator {
                 for (int lz = 0; lz < 16; lz++) {
                     final int worldX = startX + lx;
                     final int worldZ = startZ + lz;
-                    final int actualX = worldX & 15;
-                    final int actualZ = worldZ & 15;
 
                     // --- EVAPORAZIONE ---
                     if (isApocalypseActive) {
@@ -124,11 +122,11 @@ public class Generator {
                                 continue;
 
                             int targetLy = removeY & 15;
-                            BlockState targetState = targetSection.getBlockState(actualX, targetLy, actualZ);
+                            BlockState targetState = targetSection.getBlockState(lx, targetLy, lz);
 
                             if (Analyzer.isEvaporable(targetState)) {
                                 // Rimuove il blocco corrente
-                                targetSection.setBlockState(actualX, targetLy, actualZ, airState, false);
+                                targetSection.setBlockState(lx, targetLy, lz, airState, false);
                                 dirtySection[targetSecIndex] = true;
                                 changedPositions.add(new BlockPos(worldX, removeY, worldZ));
 
@@ -151,9 +149,9 @@ public class Generator {
                                                 if (neighborSection != null) {
                                                     int nxLocal = nx & 15;
                                                     BlockState neighborState = neighborSection.getBlockState(nxLocal,
-                                                            removeY & 15, actualZ);
+                                                            removeY & 15, lz);
                                                     if (Analyzer.isEvaporable(neighborState)) {
-                                                        neighborSection.setBlockState(nxLocal, removeY & 15, actualZ,
+                                                        neighborSection.setBlockState(nxLocal, removeY & 15, lz,
                                                                 airState, false);
                                                         neighborSection.recalcBlockCounts();
                                                         neighborChunk.setUnsaved(true);
@@ -179,10 +177,10 @@ public class Generator {
                                                         .getSections()[neighborSecIndex];
                                                 if (neighborSection != null) {
                                                     int nzLocal = nz & 15;
-                                                    BlockState neighborState = neighborSection.getBlockState(actualX,
+                                                    BlockState neighborState = neighborSection.getBlockState(lx,
                                                             removeY & 15, nzLocal);
                                                     if (Analyzer.isEvaporable(neighborState)) {
-                                                        neighborSection.setBlockState(actualX, removeY & 15, nzLocal,
+                                                        neighborSection.setBlockState(lx, removeY & 15, nzLocal,
                                                                 airState, false);
                                                         neighborSection.recalcBlockCounts();
                                                         neighborChunk.setUnsaved(true);
@@ -230,7 +228,7 @@ public class Generator {
 
                                 final int checkLy = y & 15;
                                 BlockState foundBlock = checkSection.getBlockState(lx, checkLy, lz);
-                                if (currentBlock.isAir())
+                                if (foundBlock.isAir())
                                     continue;
 
                                 if (!foundBlock.is(ashBlock)) {
