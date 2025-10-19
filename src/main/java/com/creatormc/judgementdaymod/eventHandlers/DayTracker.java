@@ -22,11 +22,10 @@ import net.minecraft.world.level.chunk.ChunkSource;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
+import com.creatormc.judgementdaymod.setup.ApocalypseChunkGenerator;
 import com.creatormc.judgementdaymod.utilities.Analyzer;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
-
-import com.creatormc.judgementdaymod.ApocalypseChunkGenerator;
 
 import java.lang.reflect.Field;
 
@@ -74,11 +73,13 @@ public class DayTracker {
 
         tickCount++;
 
+        // long dayCount = level.getDayTime() / 24000L; usare una roba del genere dopo
+
         if (tickCount % 100 == 0) {
             System.out.println(tickCount);
         }
-        
-        //ripulisco la cache dei blocchi bruciabili settati
+
+        // ripulisco la cache dei blocchi bruciabili settati
         if (tickCount % 1000 == 0) {
             Analyzer.clearCache();
         }
@@ -112,8 +113,8 @@ public class DayTracker {
     }
 
     public static void enqueueChunk(ChunkToProcess c) {
-    chunksToProcess.offer(c);
-}
+        chunksToProcess.offer(c);
+    }
 
     private static void replaceOverworldGenerator(ServerLevel level) {
         try {

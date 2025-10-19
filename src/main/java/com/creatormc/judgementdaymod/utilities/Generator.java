@@ -2,16 +2,21 @@ package com.creatormc.judgementdaymod.utilities;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import com.creatormc.judgementdaymod.ModBlocks;
 import com.creatormc.judgementdaymod.eventHandlers.DayTracker;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
+import com.creatormc.judgementdaymod.setup.ModBlocks;
+import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 
 import io.netty.util.internal.ThreadLocalRandom;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -50,12 +55,24 @@ public class Generator {
                 ConfigManager.apocalypseStage += 10;
                 System.out.println("apocalypse status: " + ConfigManager.apocalypseStage);
                 resetPlayerChunks(player);
+                // Ricava la fase in base alla percentuale
+                Phase currentPhase = Phase.getPhaseForPercent(Phase.toPercent(ConfigManager.apocalypseStage, ConfigManager.apocalypseMaxDays));
+                System.out.println("Current Phase: " + Phase.toPercent(ConfigManager.apocalypseStage, ConfigManager.apocalypseMaxDays));
+                
+                // Invia title (titolo fase)
+                player.connection.send(new ClientboundSetTitleTextPacket(currentPhase.getTitleComponent()));
+
+                // Invia subtitle (descrizione)
+                player.connection.send(new ClientboundSetSubtitleTextPacket(currentPhase.getDescriptionComponent()));
+
+                // Durata animazione (fadeIn, stay, fadeOut)
+                player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
             } else {
                 if (!ApocalypseManager.isApocalypseActive()) {
                     ApocalypseManager.startApocalypse();
                 }
                 System.out.println("apocalypse status: " + ConfigManager.apocalypseStage);
-                resetPlayerChunks(player); // todo rimuovere
+                resetPlayerChunks(player); // todo da rimuovere
             }
         }
     }
@@ -220,7 +237,6 @@ public class Generator {
 
                         int ly = topY & 15;
                         BlockState currentBlock = section.getBlockState(lx, ly, lz);
-
 
                         BlockState newState = ashState;
                         int targetY = topY;

@@ -1,6 +1,5 @@
 package com.creatormc.judgementdaymod.utilities;
 
-import com.creatormc.judgementdaymod.ModBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
@@ -12,6 +11,8 @@ import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.material.FluidState;
 
 import java.util.concurrent.ConcurrentHashMap;
+
+import com.creatormc.judgementdaymod.setup.ModBlocks;
 
 public class Analyzer {
 

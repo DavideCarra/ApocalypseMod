@@ -1,6 +1,5 @@
 package com.creatormc.judgementdaymod.utilities;
 
-
 import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.IOException;
@@ -18,6 +17,7 @@ public class ConfigManager {
     // Variabili in RAM (cache del config)
     public static boolean apocalypseActive = false;
     public static int apocalypseStage = 0;
+    public static int apocalypseMaxDays = 100; // <-- aggiunto
 
     /**
      * Carica il config da file in memoria.
@@ -38,8 +38,11 @@ public class ConfigManager {
             apocalypseActive = Boolean.parseBoolean(
                     props.getProperty("apocalypseEnabled", String.valueOf(apocalypseActive)));
 
-                    apocalypseStage = Integer.parseInt(
+            apocalypseStage = Integer.parseInt(
                     props.getProperty("apocalypseStage", String.valueOf(apocalypseStage)));
+
+            apocalypseMaxDays = Integer.parseInt( // <-- aggiunto
+                    props.getProperty("apocalypseMaxDays", String.valueOf(apocalypseMaxDays)));
 
             System.out.println("[JudgementDayMod] Config caricato con successo.");
 
@@ -56,6 +59,7 @@ public class ConfigManager {
 
         props.setProperty("apocalypseEnabled", String.valueOf(apocalypseActive));
         props.setProperty("apocalypseStage", String.valueOf(apocalypseStage));
+        props.setProperty("apocalypseMaxDays", String.valueOf(apocalypseMaxDays)); // <-- aggiunto
 
         try {
             // Assicura che la cartella config esista

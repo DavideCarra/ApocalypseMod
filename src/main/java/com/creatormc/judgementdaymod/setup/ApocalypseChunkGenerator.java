@@ -1,4 +1,4 @@
-package com.creatormc.judgementdaymod;
+package com.creatormc.judgementdaymod.setup;
 
 import com.creatormc.judgementdaymod.utilities.Analyzer;
 import com.creatormc.judgementdaymod.utilities.ApocalypseManager;

@@ -1,4 +1,4 @@
-package com.creatormc.judgementdaymod;
+package com.creatormc.judgementdaymod.setup;
 
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
