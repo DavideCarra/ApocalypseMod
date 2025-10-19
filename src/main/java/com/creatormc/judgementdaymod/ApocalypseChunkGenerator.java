@@ -134,7 +134,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
 
-                // metto di farlo quando l'apocalisse non è attive perchè tanto quando è attiva
+                // metto di farlo quando l'apocalisse non è attiva perchè tanto quando è attiva
                 // tutto il terreno diventa cenere
                 if (!ConfigManager.apocalypseActive && random.nextFloat() > (ConfigManager.apocalypseStage * 0.01f)) {
                     continue;

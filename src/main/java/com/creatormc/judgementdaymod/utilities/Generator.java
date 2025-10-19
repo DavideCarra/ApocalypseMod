@@ -4,11 +4,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.creatormc.judgementdaymod.ModBlocks;
+import com.creatormc.judgementdaymod.eventHandlers.DayTracker;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 
 import io.netty.util.internal.ThreadLocalRandom;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -75,7 +77,7 @@ public class Generator {
             final int startX = chunkX << 4;
             final int startZ = chunkZ << 4;
             final int minSection = lc.getMinSection();
-            final int minBuildHeight = -10;
+            final int minBuildHeight = -64;
             final int maxBuildHeight = level.getMaxBuildHeight();
 
             // Cache delle blockstate più usate
@@ -92,6 +94,9 @@ public class Generator {
             // chunk)
             final List<BlockPos> changedPositions = new ArrayList<>(256);
             final boolean[] dirtySection = new boolean[sections.length];
+
+            // traccia colonne toccate
+            final boolean[][] touchedColumn = new boolean[16][16];
 
             // Cache per heightmap - accesso diretto più veloce
             final Heightmap wsHM = lc.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
@@ -130,8 +135,12 @@ public class Generator {
                                 dirtySection[targetSecIndex] = true;
                                 changedPositions.add(new BlockPos(worldX, removeY, worldZ));
 
+                                // Aggiorna localmente la heightmap per riflettere il nuovo blocco d'aria
+                                wsHM.update(lx, removeY, lz, airState);
+
                                 // --- FIX MURI: se siamo su un bordo del chunk, svuota il blocco adiacente
-                                // nella sezione vicina --- todo, non bellissima in futuro valutare di sistemarla
+                                // nella sezione vicina --- todo, non bellissima in futuro valutare di
+                                // sistemarla
                                 if (lx == 0 || lx == 15 || lz == 0 || lz == 15) {
                                     // Vicino X
                                     if (lx == 0 || lx == 15) {
@@ -194,7 +203,6 @@ public class Generator {
                             }
 
                         }
-                        
 
                     }
 
@@ -212,10 +220,12 @@ public class Generator {
 
                         int ly = topY & 15;
                         BlockState currentBlock = section.getBlockState(lx, ly, lz);
+
+
                         BlockState newState = ashState;
                         int targetY = topY;
 
-                        if (currentBlock.is(ashBlock)) {
+                        if (Analyzer.isSkippable(currentBlock)) {
                             // Trova primo blocco non-cenere scendendo
                             for (int y = topY - 1; y > minBuildHeight; y--) {
                                 final int checkSecIndex = (y >> 4) - minSection;
@@ -231,7 +241,7 @@ public class Generator {
                                 if (foundBlock.isAir())
                                     continue;
 
-                                if (!foundBlock.is(ashBlock)) {
+                                if (!Analyzer.isSkippable(foundBlock)) {
                                     targetY = y;
                                     // Determina il tipo di trasformazione inline
                                     if (Analyzer.canBurn(foundBlock, null, null)) {
@@ -269,7 +279,6 @@ public class Generator {
                     }
                 }
             }
-            
 
             // Early return se nessuna modifica
             if (changedPositions.isEmpty())
@@ -307,15 +316,45 @@ public class Generator {
                         FallingBlockEntity.fall(level, pos, state);
                     }
                 }
+
+                int lx = pos.getX() & 15;
+                int lz = pos.getZ() & 15;
+                touchedColumn[lx][lz] = true; // segno per aggiornamento dell'illuminazione
             }
 
-            // Refresh intero chunk intero per aggiornamento lato client
+            // Refresh intero chunk per aggiornamento lato client
             ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(lc,
                     level.getLightEngine(), null, null);
 
+            // Pacchetto per "scordare" il chunk prima di reinviarlo
+            ClientboundForgetLevelChunkPacket forget = new ClientboundForgetLevelChunkPacket(chunkX, chunkZ);
+
             for (ServerPlayer viewer : level.players()) {
+                // Invia solo ai player che stanno effettivamente guardando questo chunk
                 if (level.getChunkSource().chunkMap.getPlayers(lc.getPos(), false).contains(viewer)) {
-                    viewer.connection.send(packet);
+                    // Fai "scordare" il chunk al client
+                    viewer.connection.send(forget);
+
+                    // Attendi 1 tick prima di reinviare (serve per evitare che il client ignori
+                    // il resend)
+                    level.getServer().execute(() -> {
+                        viewer.connection.send(packet);
+                    });
+                }
+            }
+
+            // dopo il bulk-edit, prima del pacchetto
+            for (int lx = 0; lx < 16; lx++) {
+                for (int lz = 0; lz < 16; lz++) {
+                    if (!touchedColumn[lx][lz])
+                        continue;
+                    int topY = wsHM.getFirstAvailable(lx, lz); // sopra il top attuale
+                    BlockPos pulse = new BlockPos(startX + lx, topY, startZ + lz);
+
+                    // metti una luce temporanea
+                    level.setBlock(pulse, Blocks.LIGHT.defaultBlockState(), Block.UPDATE_ALL);
+                    // rimuovi al tick successivo per non lasciare residui
+                    level.scheduleTick(pulse, Blocks.LIGHT, 1);
                 }
             }
 
@@ -325,33 +364,26 @@ public class Generator {
         }
     }
 
-    // il metodo rende tutti i chunk "unwatched" settando la render distance del
-    // giocatore a 0 e poi resettandola
+    // il metodo rende tutti i chunk "unwatched"
     // serve per poter ricaricare tutti i chunk quando scatta una nuova fase
     // dell'apocalisse
     public static void resetPlayerChunks(ServerPlayer player) {
-        ServerLevel level = player.serverLevel();
-
-        // verifica che ci sia effettivamente un player online
         if (player == null || player.hasDisconnected())
             return;
 
-        // Approccio: triggerare manualmente ChunkWatchEvent.Watch per tutti i chunk
-        // visibili
+        ServerLevel level = player.serverLevel();
         ChunkPos playerPos = new ChunkPos(player.blockPosition());
-        int viewDistance = level.getServer().getPlayerList().getViewDistance();
+        int viewDistance = level.getServer().getPlayerList().getViewDistance() + 1;
 
-        // Itera attraverso tutti i chunk nel raggio di vista
-        for (int x = -viewDistance; x <= viewDistance; x++) {
-            for (int z = -viewDistance; z <= viewDistance; z++) {
-                ChunkPos chunkPos = new ChunkPos(playerPos.x + x, playerPos.z + z);
-
-                // Ottieni il chunk se è caricato
-                LevelChunk chunk = level.getChunkSource().getChunkNow(chunkPos.x, chunkPos.z);
+        // Accoda direttamente i chunk visibili alla stessa coda che svuoti in
+        // onServerTick
+        for (int dx = -viewDistance; dx <= viewDistance; dx++) {
+            for (int dz = -viewDistance; dz <= viewDistance; dz++) {
+                int cx = playerPos.x + dx;
+                int cz = playerPos.z + dz;
+                LevelChunk chunk = level.getChunk(cx, cz);
                 if (chunk != null) {
-                    // Crea e posta manualmente l'evento ChunkWatchEvent.Watch
-                    ChunkWatchEvent.Watch watchEvent = new ChunkWatchEvent.Watch(player, chunk, level);
-                    MinecraftForge.EVENT_BUS.post(watchEvent);
+                    DayTracker.enqueueChunk(new ChunkToProcess(level, cx, cz));
                 }
             }
         }

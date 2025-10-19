@@ -111,6 +111,10 @@ public class DayTracker {
         }
     }
 
+    public static void enqueueChunk(ChunkToProcess c) {
+    chunksToProcess.offer(c);
+}
+
     private static void replaceOverworldGenerator(ServerLevel level) {
         try {
             // Cast a ServerChunkCache invece di ChunkSource
@@ -131,10 +135,10 @@ public class DayTracker {
             generatorField.setAccessible(true);
             generatorField.set(chunkMap, apocalypseGenerator);
 
-            System.out.println("✅ Apocalypse ChunkGenerator installed for Overworld!");
+            System.out.println("Apocalypse ChunkGenerator installed for Overworld!");
 
         } catch (Exception e) {
-            System.err.println("❌ Failed to install Apocalypse ChunkGenerator:");
+            System.err.println("Failed to install Apocalypse ChunkGenerator:");
             e.printStackTrace();
         }
     }

@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class Analyzer {
 
-    // Cache per i risultati di canBurn - ENORME boost di performance
+    // Cache per i risultati di canBurn - boost di performance
     private static final ConcurrentHashMap<Block, Boolean> burnCache = new ConcurrentHashMap<>(4096);
 
     // Array statico per evitare allocazioni
@@ -57,6 +57,44 @@ public class Analyzer {
     }
 
     /**
+     * Controlla se un blocco deve essere "sorpassato" durante la ricerca del blocco
+     * di superficie.
+     * Include: cenere, fuoco, aria (tutti i tipi), light block.
+     * Usato per scendere sotto i blocchi temporanei/vuoti e trovare il primo blocco
+     * solido.
+     */
+    public static boolean isSkippable(BlockState blockState) {
+        if (blockState == null)
+            return false;
+
+        // Blocchi temporanei o "fantasma" (light block per aggiornamento illuminazione)
+        if (blockState.is(Blocks.LIGHT) || blockState.getBlock() instanceof LightBlock) {
+            return true;
+        }
+
+        // Cenere (il custom block dell'apocalisse)
+        Block ashBlock = ModBlocks.ASH_BLOCK.get();
+        if (blockState.is(ashBlock) || blockState.is(Blocks.BARRIER)) {
+            return true;
+        }
+
+        // Fuoco (normale e soul fire)
+        if (blockState.is(Blocks.FIRE) || blockState.is(Blocks.SOUL_FIRE)) {
+            return true;
+        }
+
+        // Aria (tutti i tipi)
+        if (blockState.isAir()
+                || blockState.is(Blocks.AIR)
+                || blockState.is(Blocks.CAVE_AIR)
+                || blockState.is(Blocks.VOID_AIR)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Versione inline ottimizzata - più veloce per check frequenti
      */
     public static boolean isEvaporable(BlockState blockState) {
@@ -79,8 +117,7 @@ public class Analyzer {
                 || blockState.is(Blocks.CAVE_AIR)
                 || blockState.is(Blocks.VOID_AIR)
                 || blockState.is(Blocks.AIR)
-                || blockState.getBlock() instanceof LightBlock
-                ) {
+                || blockState.getBlock() instanceof LightBlock) {
             return true;
         }
 
