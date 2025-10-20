@@ -23,13 +23,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.ApocalypseChunkGenerator;
+import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.Analyzer;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
 
 import java.lang.reflect.Field;
 
-@Mod.EventBusSubscriber(modid = "judgementday", bus = Mod.EventBusSubscriber.Bus.FORGE)
+@Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class DayTracker {
 
     private static long tickCount = 0;

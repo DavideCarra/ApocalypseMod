@@ -46,34 +46,63 @@ public class Generator {
         if (world == null)
             return;
 
-        if (day == 1) {
+        // apocalypseCurrentDay = giorno corrente dell'apocalisse
+        // apocalypseMaxDays = durata totale in giorni
 
+        // Calcola i giorni per fase (divide maxDays in 5 fasi da 20% ciascuna)
+        int daysPerPhase = ConfigManager.apocalypseMaxDays / 5;
+
+        // Si sottrae una fase per partire dal giorno 0 con la prima fase e lasciare tempo al giocatore
+        int phaseDay = day - daysPerPhase;
+
+        // Calcola a quale fase appartiene il giorno corrente
+        // prima dell'inizio
+        int currentPhaseNumber = Math.floorDiv(phaseDay, daysPerPhase); // 0, 1, 2, 3, 4, 5
+        int previousPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase);
+
+        System.out.println("Current Phase: " + currentPhaseNumber + ", Previous Phase: " + previousPhaseNumber);
+
+        // Controlla se siamo passati a una nuova fase
+        if (currentPhaseNumber > previousPhaseNumber && phaseDay <= ConfigManager.apocalypseMaxDays) {
+
+            ConfigManager.apocalypseCurrentDay = phaseDay; // Salva il giorno corrente
+
+            System.out.println("Day: " + phaseDay + " / " + ConfigManager.apocalypseMaxDays);
+            System.out.println("Phase: " + currentPhaseNumber);
+
+            // valori attuali di essiccamento e danno
+            int baseDamageHeight = ConfigManager.minDamageHeight;
+            int baseWaterHeight = ConfigManager.minWaterEvaporationHeight;
+
+            // Calcola le nuove altezze in base alla fase
+            int newDamageHeight = baseDamageHeight - (currentPhaseNumber * (baseDamageHeight / 5));
+            int newWaterHeight = baseWaterHeight - (currentPhaseNumber * (baseWaterHeight / 5));
+
+            // assicurati che non scendano sotto
+            ConfigManager.minDamageHeight = Math.max(newDamageHeight, 0);
+            ConfigManager.minWaterEvaporationHeight = Math.max(newWaterHeight, 0);
+
+            System.out.println("New Damage Height: " + ConfigManager.minDamageHeight);
+            System.out.println("New Water Evaporation Height: " + ConfigManager.minWaterEvaporationHeight);
+            // ConfigManager.save(); todo mettere per salvare
+
+            resetPlayerChunks(player);
+
+            // Calcola la percentuale per Phase
+            int percent = Phase.toPercent(phaseDay, ConfigManager.apocalypseMaxDays);
+            Phase currentPhase = Phase.getPhaseForPercent(percent);
+
+            // Invia title e subtitle
+            player.connection.send(new ClientboundSetTitleTextPacket(currentPhase.getTitleComponent()));
+            player.connection.send(new ClientboundSetSubtitleTextPacket(currentPhase.getDescriptionComponent()));
+            player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
         }
 
-        if (day % 10 == 0) {
-            if (ConfigManager.apocalypseStage < 100) {
-                ConfigManager.apocalypseStage += 10;
-                System.out.println("apocalypse status: " + ConfigManager.apocalypseStage);
-                resetPlayerChunks(player);
-                // Ricava la fase in base alla percentuale
-                Phase currentPhase = Phase.getPhaseForPercent(Phase.toPercent(ConfigManager.apocalypseStage, ConfigManager.apocalypseMaxDays));
-                System.out.println("Current Phase: " + Phase.toPercent(ConfigManager.apocalypseStage, ConfigManager.apocalypseMaxDays));
-                
-                // Invia title (titolo fase)
-                player.connection.send(new ClientboundSetTitleTextPacket(currentPhase.getTitleComponent()));
-
-                // Invia subtitle (descrizione)
-                player.connection.send(new ClientboundSetSubtitleTextPacket(currentPhase.getDescriptionComponent()));
-
-                // Durata animazione (fadeIn, stay, fadeOut)
-                player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
-            } else {
-                if (!ApocalypseManager.isApocalypseActive()) {
-                    ApocalypseManager.startApocalypse();
-                }
-                System.out.println("apocalypse status: " + ConfigManager.apocalypseStage);
-                resetPlayerChunks(player); // todo da rimuovere
-            }
+        // Al raggiungimento del massimo, attiva l'apocalisse finale
+        if (phaseDay >= ConfigManager.apocalypseMaxDays && !ApocalypseManager.isApocalypseActive()) {
+            ConfigManager.apocalypseCurrentDay = ConfigManager.apocalypseMaxDays;
+            ApocalypseManager.startApocalypse();
+            resetPlayerChunks(player); // todo temp
         }
     }
 
@@ -94,8 +123,9 @@ public class Generator {
             final int startX = chunkX << 4;
             final int startZ = chunkZ << 4;
             final int minSection = lc.getMinSection();
-            final int minBuildHeight = -64;
+            final int minBuildHeight = ConfigManager.minWaterEvaporationHeight;
             final int maxBuildHeight = level.getMaxBuildHeight();
+            final double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
             // Cache delle blockstate più usate
             final BlockState ashState = ModBlocks.ASH_BLOCK.get().defaultBlockState();
@@ -104,9 +134,7 @@ public class Generator {
 
             // Ottimizzazione: ThreadLocalRandom più veloce per single-thread
             final ThreadLocalRandom random = ThreadLocalRandom.current();
-            final float apocalypseThreshold = ConfigManager.apocalypseStage * 0.01f;
-            final boolean isApocalypseActive = ApocalypseManager.isApocalypseActive();
-
+            final float apocalypseThreshold = ConfigManager.apocalypseCurrentDay * 0.01f;
             // Ottimizzazione: Pre-alloca con capacità realistica (max 256 blocchi per
             // chunk)
             final List<BlockPos> changedPositions = new ArrayList<>(256);
@@ -122,9 +150,6 @@ public class Generator {
             // ripetute
             final int sectionsCount = sections.length;
 
-            // Ottimizzazione: cache del check per ash block
-            final Block ashBlock = ModBlocks.ASH_BLOCK.get();
-
             // prima viene rimossa l'acqua, si itera da -1 per risolvere un problema sul
             // (fuso con le trasformazioni superficiali nello stesso doppio ciclo lx/lz)
             for (int lx = 0; lx < 16; lx++) {
@@ -133,7 +158,7 @@ public class Generator {
                     final int worldZ = startZ + lz;
 
                     // --- EVAPORAZIONE ---
-                    if (isApocalypseActive) {
+                    if (percent >= 40.0) {
                         for (int removeY = maxBuildHeight - 1; removeY >= minBuildHeight; removeY--) {
                             int targetSecIndex = (removeY >> 4) - minSection;
                             if (targetSecIndex < 0 || targetSecIndex >= sections.length)

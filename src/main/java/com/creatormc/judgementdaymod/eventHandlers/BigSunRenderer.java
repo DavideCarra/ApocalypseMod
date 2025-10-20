@@ -1,6 +1,7 @@
-package com.creatormc.judgementdaymod.setup;
+package com.creatormc.judgementdaymod.eventHandlers;
 
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
+import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -63,7 +64,7 @@ public class BigSunRenderer {
         poseStack.mulPose(Axis.XP.rotationDegrees(sunAngle));
 
         // === Parametri dinamici in base allo stage ===
-        float stage = (float) Phase.toPercent(ConfigManager.apocalypseStage, ConfigManager.apocalypseMaxDays);
+        float stage = (float) Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
         float factor = stage / 100.0F;
         long time = level.getGameTime();
         float pulse = 1.0F; // valore base

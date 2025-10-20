@@ -24,7 +24,7 @@ public class ApocalypseSky extends DimensionSpecialEffects {
 
     @Override
     public Vec3 getBrightnessDependentFogColor(Vec3 color, float brightness) {
-        double percent = Phase.toPercent(ConfigManager.apocalypseStage, ConfigManager.apocalypseMaxDays);
+        double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
         // Sotto il 20% mantieni il comportamento vanilla
         if (percent < 20.0) {
