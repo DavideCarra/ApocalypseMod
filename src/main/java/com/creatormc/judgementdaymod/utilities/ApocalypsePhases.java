@@ -122,8 +122,10 @@ public class ApocalypsePhases {
         public static int toPercent(long current, long max) {
             if (max <= 0)
                 return 0; // evita divisione per zero
-            if (current <= 0)
-                return 0;
+            if (current < 0)
+                return -1; // restituisce -1 per indicare che la fase non è iniziata
+            if (current == 0)
+                return 0; // evita calcoli inutili
             double pct = (current * 100.0) / (double) max;
             return normalize((int) Math.round(pct));
         }

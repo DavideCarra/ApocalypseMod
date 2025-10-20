@@ -41,8 +41,6 @@ public class WaterEvaporateHandler {
             return;
         }
 
-        final int minBuildHeight = ConfigManager.minWaterEvaporationHeight;
-
         // Calcola percentuale apocalisse
         double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 

@@ -1,139 +1,167 @@
 package com.creatormc.judgementdaymod.eventHandlers;
 
+import com.creatormc.judgementdaymod.models.HeatSyncPacket;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
+
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
-import net.minecraft.world.damagesource.DamageTypes;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.util.*;
+
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID)
 public class ApocalypseDamageHandler {
 
     private static int tickCounter = 0;
-    private static final int DAMAGE_INTERVAL = 40; // Danno ogni 2 secondi (40 ticks)
+    private static final int TICK_INTERVAL = 20; // 1 secondo
+
+    // Mappa UUID → livello di calore (0–10)
+    private static final Map<UUID, Float> heatLevels = new HashMap<>();
 
     @SubscribeEvent
     public static void onLevelTick(TickEvent.LevelTickEvent event) {
-        // Esegui solo sul server e nella fase END
-        if (event.side.isClient() || event.phase != TickEvent.Phase.END) {
+        if (event.side.isClient() || event.phase != TickEvent.Phase.END)
             return;
-        }
 
         Level level = event.level;
-
-        // Solo per l'Overworld
-        if (!level.dimension().equals(Level.OVERWORLD)) {
+        if (!level.dimension().equals(Level.OVERWORLD))
             return;
-        }
 
         tickCounter++;
-        if (tickCounter < DAMAGE_INTERVAL) {
+        if (tickCounter < TICK_INTERVAL)
             return;
-        }
         tickCounter = 0;
 
-
-        // Calcola il danno in base allo stage
         double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
-        // Sotto il 20% nessun danno
-        if (percent < 20.0) {
+        if (!(level instanceof ServerLevel serverLevel))
             return;
-        }
 
-        // Normalizza tra 20% e 100%
-        double factor = (percent - 20.0) / 80.0;
+        // Costruisci lista unificata di entità vive + giocatori senza duplicati
+        Set<UUID> seen = new HashSet<>();
+        List<LivingEntity> allLiving = new ArrayList<>();
 
-        // Danno incrementale: da 0.5 a 4.0 cuori
-        float baseDamage = (float) (0.5 + 3.5 * factor);
-
-        // Applica danno a tutte le entità viventi
         AABB searchBox = new AABB(
                 -30_000_000, ConfigManager.minDamageHeight, -30_000_000,
                 30_000_000, 320, 30_000_000);
 
-        for (LivingEntity livingEntity : level.getEntitiesOfClass(LivingEntity.class, searchBox)) {
+        for (LivingEntity e : serverLevel.getEntitiesOfClass(LivingEntity.class, searchBox))
+            if (seen.add(e.getUUID()))
+                allLiving.add(e);
 
-            // Salta i giocatori in creative/spectator
-            if (livingEntity instanceof Player player) {
-                if (player.isCreative() || player.isSpectator()) {
+        for (ServerPlayer p : serverLevel.players())
+            if (seen.add(p.getUUID()))
+                allLiving.add(p);
+
+        // Ciclo su tutte le entità vive
+        for (LivingEntity entity : allLiving) {
+
+            if (entity instanceof Player p && (p.isCreative() || p.isSpectator()))
+                continue;
+
+            UUID id = entity.getUUID();
+            float heat = heatLevels.getOrDefault(id, 0f);
+
+            boolean isUnderCover = !level.canSeeSky(entity.blockPosition());
+            boolean isInWater = entity.isInWater();
+            boolean isInRain = level.isRainingAt(entity.blockPosition());
+            boolean isInBubble = entity.getBlockStateOn().is(Blocks.BUBBLE_COLUMN);
+            boolean isInCooling = isInWater || isInRain || isInBubble;
+            double y = entity.getY();
+
+            boolean isNight = !level.isDay();
+
+            // === GESTIONE CALORE ===
+            if (percent < 0)
+                continue;
+
+            // Normalizza [0..1]
+            float pctNorm = (float) Math.max(0, Math.min(1.0, percent / 100.0));
+
+            if (percent < 20.0) {
+                // Fase iniziale: di notte nessun effetto
+                if (isNight)
                     continue;
+
+                float growth = 0.25f;
+
+                if (isUnderCover)
+                    heat -= 0.15f;
+                if (isInCooling)
+                    heat -= 0.4f;
+                if (!isUnderCover && !isInCooling)
+                    heat += growth;
+            } else {
+                if (y >= ConfigManager.minDamageHeight) {
+
+                    float growth = (float) (0.25f + 0.75f * pctNorm);
+
+                    // Di notte 20–60% → dimezza effetto
+                    if (isNight && percent <= 60.0)
+                        growth *= 0.5f;
+
+                    if (percent >= 40.0) {
+                        if (isUnderCover)
+                            growth *= 0.9f;
+                        if (isInCooling)
+                            growth *= 0.7f;
+                    } else {
+                        if (isUnderCover)
+                            heat -= 0.2f;
+                        if (isInCooling)
+                            heat -= 0.5f;
+                    }
+
+                    heat += growth;
+
+                } else {
+                    if (isUnderCover)
+                        heat -= 0.3f;
+                    if (isInCooling)
+                        heat -= 1.0f;
                 }
             }
 
-            // Controlla se l'entità è sopra l'altezza minima
-            if (livingEntity.getY() < ConfigManager.minDamageHeight) {
-                continue;
+            // Clamp 0–10
+            heat = Math.max(0f, Math.min(10f, heat));
+
+            // === APPLICA EFFETTO FUOCO E DANNO ===
+            if (heat >= 10f) {
+                entity.setSecondsOnFire(8);
+                DamageSource fireSource = level.damageSources().inFire();
+                float damage = 2.0F;
+
+                // Di notte tra 20–60% → danno dimezzato
+                if (isNight && percent > 20.0 && percent <= 60.0)
+                    damage *= 0.5f;
+
+                entity.hurt(fireSource, damage);
+            } else if (heat >= 7f) {
+                entity.setSecondsOnFire(3);
             }
 
-            // Controlla protezione in base alla percentuale
-            boolean isUnderCover = !level.canSeeSky(livingEntity.blockPosition());
-            boolean isNight = !level.isDay();
+            // Salva il valore aggiornato
+            heatLevels.put(id, heat);
 
-            // Fino al 40%: protetti se al coperto
-            if (percent <= 40.0 && isUnderCover) {
-                continue;
-            }
-
-            // Fino al 40%: danno solo di giorno
-            if (percent <= 40.0 && isNight) {
-                continue;
-            }
-
-            // Calcola il danno base
-            float damage = baseDamage;
-
-            // Tra 40% e 60%: di notte danno dimezzato
-            if (percent > 40.0 && percent <= 60.0 && isNight) {
-                damage *= 0.5F;
-            }
-
-            // Sopra il 60%: danno uguale giorno e notte (nessuna riduzione)
-
-            // Applica modificatori aggiuntivi
-            damage = calculateDamage(damage, livingEntity, factor);
-
-            DamageSource damageSource = level.damageSources().magic(); // O crea un custom damage source
-            livingEntity.hurt(damageSource, damage);
-
-            // Opzionale: aggiungi effetto fuoco nelle fasi avanzate
-            if (percent > 70.0) {
-                int fireDuration = (int) (40 * factor); // Fino a 2 secondi di fuoco
-                livingEntity.setSecondsOnFire(fireDuration);
-            }
-        }
-    }
-
-    /**
-     * Calcola il danno finale considerando armature e resistenze
-     */
-    private static float calculateDamage(float baseDamage, LivingEntity entity, double factor) {
-        // Danno base
-        float damage = baseDamage;
-
-        // Opzionale: riduci danno in acqua
-        if (entity.isInWater()) {
-            damage *= 0.5F;
+            // Invio pacchetto al client
+            if (entity instanceof ServerPlayer serverPlayer) {
+                NetworkHandler.sendToClient(new HeatSyncPacket(heat), serverPlayer);
         }
 
-        // Opzionale: aumenta danno se l'entità è già in fiamme
-        if (entity.isOnFire()) {
-            damage *= 1.2F;
-        }
-
-        // Nelle fasi finali (>90%), danno ancora maggiore
-        if (factor > 0.875) { // >90%
-            damage *= 1.5F;
-        }
-
-        return damage;
+        // Pulizia mappa per evitare accumulo memoria
+        heatLevels.keySet().removeIf(entryId -> {
+            var e = serverLevel.getEntity(entryId);
+            return e == null || e.isRemoved();
+        });
     }
 }

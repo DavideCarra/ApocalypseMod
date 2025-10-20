@@ -1,0 +1,59 @@
+package com.creatormc.judgementdaymod.eventHandlers;
+
+import com.creatormc.judgementdaymod.models.ClientHeatData;
+import com.creatormc.judgementdaymod.setup.JudgementDayMod;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.RenderGuiOverlayEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.common.Mod;
+
+@Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, value = Dist.CLIENT)
+public class HeatOverlay {
+
+    @SubscribeEvent
+    public static void onRenderOverlay(RenderGuiOverlayEvent.Post event) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null)
+            return;
+
+        float heat = ClientHeatData.get();
+        float maxHeat = 10f;
+        float ratio = heat / maxHeat;
+
+        int width = 100;
+        int height = 10;
+        int x = (event.getWindow().getGuiScaledWidth() / 2) - (width / 2);
+        int y = event.getWindow().getGuiScaledHeight() - 70; // 🔼 più in alto
+
+        GuiGraphics g = event.getGuiGraphics();
+
+        // Sfondo semi-trasparente con bordi arrotondati
+        fillRounded(g, x - 2, y - 2, width + 4, height + 4, 4, 0x66000000);
+
+        // Colore dinamico in base al calore
+        int red = (int) (255 * ratio);
+        int green = (int) (128 * (1.0 - ratio));
+        int color = (0xFF << 24) | (red << 16) | (green << 8);
+
+        // Barra interna solo se > 0
+        int barWidth = (int) (width * ratio);
+        if (barWidth > 0)
+            fillRounded(g, x, y, barWidth, height, 3, color);
+
+        // Contorno luminoso
+        if (ratio > 0.7f) {
+            int glowColor = 0x55FF3300;
+            fillRounded(g, x - 3, y - 3, width + 6, height + 6, 5, glowColor);
+        }
+    }
+
+    private static void fillRounded(GuiGraphics g, int x, int y, int w, int h, int r, int color) {
+        g.fill(x + r, y, x + w - r, y + h, color);
+        g.fill(x, y + r, x + w, y + h - r, color);
+        g.fill(x + r, y + r, x + w - r, y + h - r, color);
+    }
+}

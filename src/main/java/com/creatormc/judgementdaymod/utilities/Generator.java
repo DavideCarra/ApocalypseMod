@@ -36,6 +36,10 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
 
 public class Generator {
+    // Calcola i giorni per fase (divide maxDays in 5 fasi da 20% ciascuna)
+    private static int daysPerPhase = ConfigManager.apocalypseMaxDays / 5;
+    private static int previousDay = 0 - daysPerPhase; // giorno 0 meno una fase per dare tempo al giocatore di
+                                                       // iniziare
 
     public static void handleDayEvent(int day, ServerPlayer player) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
@@ -46,29 +50,22 @@ public class Generator {
         if (world == null)
             return;
 
-        // apocalypseCurrentDay = giorno corrente dell'apocalisse
-        // apocalypseMaxDays = durata totale in giorni
-
-        // Calcola i giorni per fase (divide maxDays in 5 fasi da 20% ciascuna)
-        int daysPerPhase = ConfigManager.apocalypseMaxDays / 5;
-
-        // Si sottrae una fase per partire dal giorno 0 con la prima fase e lasciare tempo al giocatore
+        // Si sottrae una fase per partire dal giorno 0 con la prima fase e lasciare
+        // tempo al giocatore
         int phaseDay = day - daysPerPhase;
 
         // Calcola a quale fase appartiene il giorno corrente
         // prima dell'inizio
-        int currentPhaseNumber = Math.floorDiv(phaseDay, daysPerPhase); // 0, 1, 2, 3, 4, 5
-        int previousPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase);
+        int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase); // -1, 0, 1, 2, 3, 4,
+                                                                                                  // 5
+        int previousPhaseNumber = Math.floorDiv(previousDay, daysPerPhase); // -1, 0, 1, 2, 3, 4, 5
 
         System.out.println("Current Phase: " + currentPhaseNumber + ", Previous Phase: " + previousPhaseNumber);
 
         // Controlla se siamo passati a una nuova fase
         if (currentPhaseNumber > previousPhaseNumber && phaseDay <= ConfigManager.apocalypseMaxDays) {
 
-            ConfigManager.apocalypseCurrentDay = phaseDay; // Salva il giorno corrente
-
-            System.out.println("Day: " + phaseDay + " / " + ConfigManager.apocalypseMaxDays);
-            System.out.println("Phase: " + currentPhaseNumber);
+            previousDay = currentPhaseNumber;
 
             // valori attuali di essiccamento e danno
             int baseDamageHeight = ConfigManager.minDamageHeight;
@@ -103,6 +100,15 @@ public class Generator {
             ConfigManager.apocalypseCurrentDay = ConfigManager.apocalypseMaxDays;
             ApocalypseManager.startApocalypse();
             resetPlayerChunks(player); // todo temp
+
+            // === DISATTIVA OGNI PIOGGIA ===
+            if (world.isRaining() || world.isThundering()) {
+                world.setWeatherParameters(0, 0, false, false); // forza cielo sereno immediato
+            }
+
+            // Previene la riattivazione futura: tempo di sole infinito
+            world.setWeatherParameters(Integer.MAX_VALUE, 0, false, false);
+            System.out.println("[Apocalypse] Pioggia e temporali permanentemente disattivati.");
         }
     }
 

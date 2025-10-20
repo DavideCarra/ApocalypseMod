@@ -74,6 +74,7 @@ public class DayTracker {
 
         tickCount++;
 
+
         // long dayCount = level.getDayTime() / 24000L; usare una roba del genere dopo
 
         if (tickCount % 100 == 0) {
@@ -89,6 +90,7 @@ public class DayTracker {
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (tickCount % TICKS_PER_DAY == 0) {
                 int day = (int) (tickCount / TICKS_PER_DAY);
+                ConfigManager.apocalypseCurrentDay++;
                 Generator.handleDayEvent(day, player);
             }
         }
