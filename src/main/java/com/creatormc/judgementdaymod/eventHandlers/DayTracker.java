@@ -74,12 +74,7 @@ public class DayTracker {
 
         tickCount++;
 
-
         // long dayCount = level.getDayTime() / 24000L; usare una roba del genere dopo
-
-        if (tickCount % 100 == 0) {
-            System.out.println(tickCount);
-        }
 
         // ripulisco la cache dei blocchi bruciabili settati
         if (tickCount % 1000 == 0) {
@@ -91,7 +86,9 @@ public class DayTracker {
             if (tickCount % TICKS_PER_DAY == 0) {
                 int day = (int) (tickCount / TICKS_PER_DAY);
                 ConfigManager.apocalypseCurrentDay++;
+                ConfigManager.save();
                 Generator.handleDayEvent(day, player);
+
             }
         }
 

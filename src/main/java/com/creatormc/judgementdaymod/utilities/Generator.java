@@ -79,9 +79,7 @@ public class Generator {
             ConfigManager.minDamageHeight = Math.max(newDamageHeight, 0);
             ConfigManager.minWaterEvaporationHeight = Math.max(newWaterHeight, 0);
 
-            System.out.println("New Damage Height: " + ConfigManager.minDamageHeight);
-            System.out.println("New Water Evaporation Height: " + ConfigManager.minWaterEvaporationHeight);
-            // ConfigManager.save(); todo mettere per salvare
+            ConfigManager.save();
 
             resetPlayerChunks(player);
 
@@ -99,7 +97,6 @@ public class Generator {
         if (phaseDay >= ConfigManager.apocalypseMaxDays && !ApocalypseManager.isApocalypseActive()) {
             ConfigManager.apocalypseCurrentDay = ConfigManager.apocalypseMaxDays;
             ApocalypseManager.startApocalypse();
-            resetPlayerChunks(player); // todo temp
 
             // === DISATTIVA OGNI PIOGGIA ===
             if (world.isRaining() || world.isThundering()) {
@@ -109,6 +106,8 @@ public class Generator {
             // Previene la riattivazione futura: tempo di sole infinito
             world.setWeatherParameters(Integer.MAX_VALUE, 0, false, false);
             System.out.println("[Apocalypse] Pioggia e temporali permanentemente disattivati.");
+
+            ConfigManager.save();
         }
     }
 

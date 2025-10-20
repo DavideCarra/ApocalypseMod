@@ -156,6 +156,7 @@ public class ApocalypseDamageHandler {
             // Invio pacchetto al client
             if (entity instanceof ServerPlayer serverPlayer) {
                 NetworkHandler.sendToClient(new HeatSyncPacket(heat), serverPlayer);
+            }
         }
 
         // Pulizia mappa per evitare accumulo memoria
