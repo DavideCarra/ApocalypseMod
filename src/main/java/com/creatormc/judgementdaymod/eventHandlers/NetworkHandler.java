@@ -1,9 +1,6 @@
 package com.creatormc.judgementdaymod.eventHandlers;
 
-
-
 import com.creatormc.judgementdaymod.models.HeatSyncPacket;
-
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.PacketDistributor;
@@ -18,8 +15,7 @@ public class NetworkHandler {
             new ResourceLocation("judgementday", "main"),
             () -> PROTOCOL_VERSION,
             PROTOCOL_VERSION::equals,
-            PROTOCOL_VERSION::equals
-    );
+            PROTOCOL_VERSION::equals);
 
     public static void register() {
         INSTANCE.registerMessage(packetId++, HeatSyncPacket.class,

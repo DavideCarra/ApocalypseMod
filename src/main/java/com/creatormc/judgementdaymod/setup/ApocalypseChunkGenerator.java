@@ -41,7 +41,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
 
     public ApocalypseChunkGenerator(ChunkGenerator before, BiomeSource biomeSource) {
         super(biomeSource);
-        this.before = before; // delega al generatore vanilla passato dal JSON
+        this.before = before; // delegate to the vanilla generator passed from JSON
     }
 
     @Override
@@ -49,7 +49,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         return CODEC;
     }
 
-    // ==== Deleghe "safe" al vanilla ====
+    // ==== Safe delegations to vanilla ====
     @Override
     public CompletableFuture<ChunkAccess> fillFromNoise(Executor ex, Blender blender, RandomState rs,
             StructureManager sm, ChunkAccess chunk) {
@@ -58,7 +58,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         } else {
 
             return before.fillFromNoise(ex, blender, rs, sm, chunk).thenApply(chunkAccess -> {
-                // Sostituisci tutta l'acqua con aria
+                // Replace all water with air
                 for (int x = 0; x < 16; x++) {
                     for (int z = 0; z < 16; z++) {
                         for (int y = chunk.getMinBuildHeight(); y < chunk.getMaxBuildHeight(); y++) {
@@ -113,13 +113,13 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
     @Override
     public void addDebugScreenInfo(List<String> info, RandomState rs, BlockPos pos) {
         before.addDebugScreenInfo(info, rs, pos);
-        info.add("JD apocalypse: " + (/* non hai ServerLevel qui; ometti o mostra 'unknown' */ "unknown"));
+        info.add("JD apocalypse: " + ("unknown")); // No ServerLevel here; show 'unknown'
     }
 
-    // ==== Qui facciamo SOLO la sostituzione topsoil quando ON ====
+    // ==== Surface replacement only when apocalypse is ON ====
     @Override
     public void buildSurface(WorldGenRegion region, StructureManager sm, RandomState rs, ChunkAccess chunk) {
-        // superficie vanilla
+        // vanilla surface
         before.buildSurface(region, sm, rs, chunk);
 
         final int chunkX = chunk.getPos().x;
@@ -130,12 +130,11 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         MutableBlockPos posSurface = new MutableBlockPos();
         MutableBlockPos posUnder1Block = new MutableBlockPos();
         MutableBlockPos posUnder2Blocks = new MutableBlockPos();
-        // Sostituzione colonna per colonna
+        // Column-by-column replacement
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
 
-                // metto di farlo quando l'apocalisse non è attiva perchè tanto quando è attiva
-                // tutto il terreno diventa cenere
+                // Skip if apocalypse is not active since terrain will turn to ash later anyway
                 if (!ConfigManager.apocalypseActive && random.nextFloat() > (ConfigManager.apocalypseCurrentDay * 0.01f)) {
                     continue;
                 }
@@ -166,7 +165,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         if (!ApocalypseManager.isApocalypseActive()) {
             before.applyBiomeDecoration(wLevel, chunk, sm);
         } else {
-            // valutare se inserire elementi custom nel mondo se l'apocalisse è attiva
+            // TODO Placeholder for custom world elements during apocalypse
         }
     }
 }

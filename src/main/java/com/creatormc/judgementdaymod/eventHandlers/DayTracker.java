@@ -36,17 +36,17 @@ public class DayTracker {
     private static long tickCount = 0;
     private static final int TICKS_PER_DAY = 40;
 
-    // Coda thread-safe per processare i chunk nel tick successivo
+    // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
 
-    @SubscribeEvent(priority = EventPriority.LOW) // Bassa priorità per essere sicuri che il chunk sia pronto
+    @SubscribeEvent(priority = EventPriority.LOW) // Low priority to ensure the chunk is fully loaded
     public static void onChunkWatch(ChunkWatchEvent.Watch event) {
-        // Solo lato server
+        // Server side only
         if (event.getLevel().isClientSide()) {
             return;
         }
 
-        // Solo per ServerLevel
+        // Only for ServerLevel
         if (!(event.getLevel() instanceof ServerLevel)) {
             return;
         }
@@ -54,12 +54,12 @@ public class DayTracker {
         ServerLevel serverLevel = event.getLevel();
         ChunkAccess chunk = event.getChunk();
 
-        // Verifica che sia un LevelChunk completo (non solo generazione parziale)
+        // Verify it's a complete LevelChunk (not partially generated)
         if (!(chunk instanceof LevelChunk)) {
             return;
         }
 
-        // Non modificare il mondo ora, ma aggiungi alla coda per processare dopo
+        // Do not modify the world now, just add it to the queue for later processing
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
 
@@ -74,25 +74,24 @@ public class DayTracker {
 
         tickCount++;
 
-        // long dayCount = level.getDayTime() / 24000L; usare una roba del genere dopo
+        // long dayCount = level.getDayTime() / 24000L; use something like this later
 
-        // ripulisco la cache dei blocchi bruciabili settati
+        // Clear cached burnable blocks periodically
         if (tickCount % 1000 == 0) {
             Analyzer.clearCache();
         }
 
-        // Tutti i player online:
+        // All online players:
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             if (tickCount % TICKS_PER_DAY == 0) {
                 int day = (int) (tickCount / TICKS_PER_DAY);
                 ConfigManager.apocalypseCurrentDay++;
                 ConfigManager.save();
                 Generator.handleDayEvent(day, player);
-
             }
         }
 
-        // Processa SOLO i chunk nella coda (quelli appena caricati)
+        // Process ONLY chunks in the queue (recently loaded ones)
         ChunkToProcess chunkToProcess;
         while ((chunkToProcess = chunksToProcess.poll()) != null) {
             Generator.processChunk(chunkToProcess);
@@ -118,16 +117,16 @@ public class DayTracker {
 
     private static void replaceOverworldGenerator(ServerLevel level) {
         try {
-            // Cast a ServerChunkCache invece di ChunkSource
+            // Cast to ServerChunkCache instead of ChunkSource
             ServerChunkCache serverChunkCache = (ServerChunkCache) level.getChunkSource();
             ChunkGenerator originalGenerator = serverChunkCache.getGenerator();
 
-            // Crea il tuo wrapper generator
+            // Create your custom generator wrapper
             ApocalypseChunkGenerator apocalypseGenerator = new ApocalypseChunkGenerator(
                     originalGenerator,
                     originalGenerator.getBiomeSource());
 
-            // Usa reflection per sostituire il generator nella ChunkMap
+            // Use reflection to replace the generator inside the ChunkMap
             Field chunkMapField = ServerChunkCache.class.getDeclaredField("chunkMap");
             chunkMapField.setAccessible(true);
             ChunkMap chunkMap = (ChunkMap) chunkMapField.get(serverChunkCache);

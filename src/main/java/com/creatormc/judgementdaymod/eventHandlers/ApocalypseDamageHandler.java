@@ -23,9 +23,9 @@ import java.util.*;
 public class ApocalypseDamageHandler {
 
     private static int tickCounter = 0;
-    private static final int TICK_INTERVAL = 20; // 1 secondo
+    private static final int TICK_INTERVAL = 20; // 1 second
 
-    // Mappa UUID → livello di calore (0–10)
+    // Map UUID → heat level (0–10)
     private static final Map<UUID, Float> heatLevels = new HashMap<>();
 
     @SubscribeEvent
@@ -47,7 +47,7 @@ public class ApocalypseDamageHandler {
         if (!(level instanceof ServerLevel serverLevel))
             return;
 
-        // Costruisci lista unificata di entità vive + giocatori senza duplicati
+        // Build unified list of living entities + players without duplicates
         Set<UUID> seen = new HashSet<>();
         List<LivingEntity> allLiving = new ArrayList<>();
 
@@ -63,7 +63,7 @@ public class ApocalypseDamageHandler {
             if (seen.add(p.getUUID()))
                 allLiving.add(p);
 
-        // Ciclo su tutte le entità vive
+        // Loop through all living entities
         for (LivingEntity entity : allLiving) {
 
             if (entity instanceof Player p && (p.isCreative() || p.isSpectator()))
@@ -81,15 +81,15 @@ public class ApocalypseDamageHandler {
 
             boolean isNight = !level.isDay();
 
-            // === GESTIONE CALORE ===
+            // === HEAT MANAGEMENT ===
             if (percent < 0)
                 continue;
 
-            // Normalizza [0..1]
+            // Normalize [0..1]
             float pctNorm = (float) Math.max(0, Math.min(1.0, percent / 100.0));
 
             if (percent < 20.0) {
-                // Fase iniziale: di notte nessun effetto
+                // Initial phase: no effect at night
                 if (isNight)
                     continue;
 
@@ -106,7 +106,7 @@ public class ApocalypseDamageHandler {
 
                     float growth = (float) (0.25f + 0.75f * pctNorm);
 
-                    // Di notte 20–60% → dimezza effetto
+                    // At night between 20–60% → halve effect
                     if (isNight && percent <= 60.0)
                         growth *= 0.5f;
 
@@ -135,13 +135,13 @@ public class ApocalypseDamageHandler {
             // Clamp 0–10
             heat = Math.max(0f, Math.min(10f, heat));
 
-            // === APPLICA EFFETTO FUOCO E DANNO ===
+            // === APPLY FIRE EFFECT AND DAMAGE ===
             if (heat >= 10f) {
                 entity.setSecondsOnFire(8);
                 DamageSource fireSource = level.damageSources().inFire();
                 float damage = 2.0F;
 
-                // Di notte tra 20–60% → danno dimezzato
+                // At night between 20–60% → half damage
                 if (isNight && percent > 20.0 && percent <= 60.0)
                     damage *= 0.5f;
 
@@ -150,16 +150,16 @@ public class ApocalypseDamageHandler {
                 entity.setSecondsOnFire(3);
             }
 
-            // Salva il valore aggiornato
+            // Save updated value
             heatLevels.put(id, heat);
 
-            // Invio pacchetto al client
+            // Send packet to client
             if (entity instanceof ServerPlayer serverPlayer) {
                 NetworkHandler.sendToClient(new HeatSyncPacket(heat), serverPlayer);
             }
         }
 
-        // Pulizia mappa per evitare accumulo memoria
+        // Cleanup map to avoid memory accumulation
         heatLevels.keySet().removeIf(entryId -> {
             var e = serverLevel.getEntity(entryId);
             return e == null || e.isRemoved();

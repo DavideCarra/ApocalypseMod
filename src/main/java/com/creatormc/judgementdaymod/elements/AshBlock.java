@@ -26,18 +26,18 @@ public class AshBlock extends FallingBlock {
 
     public AshBlock() {
         super(BlockBehaviour.Properties.of()
-                .strength(0.05f, 0.05f) // Estremamente fragile
+                .strength(0.05f, 0.05f) // Extremely fragile
                 .sound(SoundType.SAND)
-                .lightLevel((state) -> 0) // Non emette luce
-                .speedFactor(0.7f) // Rallenta di più il movimento
-                .jumpFactor(0.9f) // Rende più difficile saltare
+                .lightLevel((state) -> 0) // Does not emit light
+                .speedFactor(0.7f) // Slows movement more
+                .jumpFactor(0.9f) // Makes jumping harder
                 .friction(0.9f));
         this.registerDefaultState(this.stateDefinition.any().setValue(SPREADS_LEFT, 1));
     }
 
     @Override
     public int getDustColor(BlockState state, BlockGetter reader, BlockPos pos) {
-        return 0x6B6B6B; // Grigio scuro per la cenere
+        return 0x6B6B6B; // Dark gray for ash
     }
 
     @Override
@@ -45,54 +45,11 @@ public class AshBlock extends FallingBlock {
         builder.add(SPREADS_LEFT);
     }
 
-    // Opzionale: fa sì che la cenere cada più lentamente
+    // Optional: makes ash fall more slowly
     @Override
     protected void falling(FallingBlockEntity fallingEntity) {
         fallingEntity.setDeltaMovement(
                 fallingEntity.getDeltaMovement().multiply(1.0, 0.8, 1.0));
     }
-
- 
-
-
-    /*public void trasformOrBurn(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
-        int remaining = state.getValue(SPREADS_LEFT);
-        if (remaining <= 0)
-            return;
-
-        // scegli un vicino a caso
-        Direction dir = Direction.getRandom(random);
-        BlockPos targetPos = pos.relative(dir);
-        BlockState targetState = level.getBlockState(targetPos);
-        if (!targetState.isAir()) {
-            if (!targetState.is(this)) {
-                if (Analyzer.canBurn(targetState, level, targetPos)) {
-                    // Se infiammabile → fuoco
-                    level.setBlock(targetPos, Blocks.FIRE.defaultBlockState(), 16 | 2);
-                } else {
-
-                    // Altrimenti trasforma in cenere
-                    level.setBlock(targetPos, this.defaultBlockState()
-                            .setValue(SPREADS_LEFT, 0), 16 | 2);
-                }
-
-                // decrementa i tentativi rimasti
-                level.setBlock(pos, state.setValue(SPREADS_LEFT, remaining - 1), 16 | 2);
-            }
-        }
-
-        // incendia sempre il blocco sotto
-        dir = Direction.DOWN;
-        targetPos = pos.relative(dir);
-        targetState = level.getBlockState(targetPos);
-        if (!targetState.isAir() && Analyzer.canBurn(targetState, level, targetPos)) {
-            level.setBlock(targetPos, Blocks.FIRE.defaultBlockState(), 16 | 2);
-        }
-
-        // Ripianifica il prossimo tick SOLO se ha ancora tentativi
-        if (remaining - 1 > 0) {
-            level.scheduleTick(pos, this, 40);
-        }
-    }*/
 
 }

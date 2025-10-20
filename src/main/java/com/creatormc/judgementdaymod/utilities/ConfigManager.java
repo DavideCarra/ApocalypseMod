@@ -13,23 +13,23 @@ public class ConfigManager {
 
     private static final Path CONFIG_PATH = FMLPaths.CONFIGDIR.get().resolve("judgementdaymod-apocalypse.properties");
 
-    // Variabili in RAM (cache del config)
+    // Runtime cache of config values
     public static boolean apocalypseActive = false;
     public static int apocalypseCurrentDay = 0;
     public static int apocalypseMaxDays = 100;
-    public static int minDamageHeight = 100; // Altezza minima per danno creature
-    public static int minWaterEvaporationHeight = 80; // Altezza minima evaporazione acqua
+    public static int minDamageHeight = 100; // Minimum height for creature damage
+    public static int minWaterEvaporationHeight = 80; // Minimum height for water evaporation
 
     /**
-     * Carica il config da file in memoria.
-     * Va chiamato all'avvio della mod o all'apertura del mondo.
+     * Loads the config file into memory.
+     * Should be called at mod startup or when a world is loaded.
      */
     public static void load() {
         Properties props = new Properties();
 
         if (!Files.exists(CONFIG_PATH)) {
-            System.out.println("[JudgementDayMod] Config non trovato, creo con valori default.");
-            save(); // crea il file con i valori di default
+            System.out.println("[JudgementDayMod] Config not found, creating with default values.");
+            save(); // create the file with default values
             return;
         }
 
@@ -44,8 +44,7 @@ public class ConfigManager {
 
             apocalypseCurrentDay = Integer.parseInt(
                     props.getProperty("apocalypseCurrentDay", String.valueOf(apocalypseCurrentDay)))
-                    - (apocalypseMaxDays / 5); // carico il primo giorno ma partendo da una fase negativa quindi ad
-                                               // apocalisse non iniziata
+                    - (apocalypseMaxDays / 5); // load first day but start from negative stage (before apocalypse)
 
             minDamageHeight = Integer.parseInt(
                     props.getProperty("minDamageHeight", String.valueOf(minDamageHeight)));
@@ -53,19 +52,20 @@ public class ConfigManager {
             minWaterEvaporationHeight = Integer.parseInt(
                     props.getProperty("minWaterEvaporationHeight", String.valueOf(minWaterEvaporationHeight)));
 
-            System.out.println("[JudgementDayMod] Config caricato con successo.");
+            System.out.println("[JudgementDayMod] Config loaded successfully.");
 
         } catch (IOException e) {
-            System.err.println("[JudgementDayMod] Errore nel leggere il config: " + e.getMessage());
+            System.err.println("[JudgementDayMod] Error reading config: " + e.getMessage());
         }
     }
 
     /**
-     * Salva le variabili correnti in memoria nel file config.
+     * Saves current in-memory variables to the config file.
      */
     public static void save() {
         Properties props = new Properties();
-        // todo capire se il salvataggio è corretto vista la sottrazione nel load
+        // TODO: verify that saving logic is correct given the subtraction in load()
+        apocalypseCurrentDay += (apocalypseMaxDays / 5);
         props.setProperty("apocalypseActive", String.valueOf(apocalypseActive));
         props.setProperty("apocalypseCurrentDay", String.valueOf(apocalypseCurrentDay));
         props.setProperty("apocalypseMaxDays", String.valueOf(apocalypseMaxDays));
@@ -73,17 +73,16 @@ public class ConfigManager {
         props.setProperty("minWaterEvaporationHeight", String.valueOf(minWaterEvaporationHeight));
 
         try {
-            // Assicura che la cartella config esista
             Files.createDirectories(CONFIG_PATH.getParent());
 
             try (OutputStream out = Files.newOutputStream(CONFIG_PATH)) {
                 props.store(out, "JudgementDayMod Apocalypse Config");
             }
 
-            System.out.println("[JudgementDayMod] Config salvato in " + CONFIG_PATH);
+            System.out.println("[JudgementDayMod] Config saved to " + CONFIG_PATH);
 
         } catch (IOException e) {
-            System.err.println("[JudgementDayMod] Errore nel salvare il config: " + e.getMessage());
+            System.err.println("[JudgementDayMod] Error saving config: " + e.getMessage());
         }
     }
 }

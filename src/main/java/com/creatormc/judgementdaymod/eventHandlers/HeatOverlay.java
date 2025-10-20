@@ -27,24 +27,24 @@ public class HeatOverlay {
         int width = 100;
         int height = 10;
         int x = (event.getWindow().getGuiScaledWidth() / 2) - (width / 2);
-        int y = event.getWindow().getGuiScaledHeight() - 70; // 🔼 più in alto
+        int y = event.getWindow().getGuiScaledHeight() - 70; // 🔼 higher position
 
         GuiGraphics g = event.getGuiGraphics();
 
-        // Sfondo semi-trasparente con bordi arrotondati
+        // Semi-transparent background with rounded corners
         fillRounded(g, x - 2, y - 2, width + 4, height + 4, 4, 0x66000000);
 
-        // Colore dinamico in base al calore
+        // Dynamic color based on heat value
         int red = (int) (255 * ratio);
         int green = (int) (128 * (1.0 - ratio));
         int color = (0xFF << 24) | (red << 16) | (green << 8);
 
-        // Barra interna solo se > 0
+        // Draw inner bar only if > 0
         int barWidth = (int) (width * ratio);
         if (barWidth > 0)
             fillRounded(g, x, y, barWidth, height, 3, color);
 
-        // Contorno luminoso
+        // Glowing border
         if (ratio > 0.7f) {
             int glowColor = 0x55FF3300;
             fillRounded(g, x - 3, y - 3, width + 6, height + 6, 5, glowColor);

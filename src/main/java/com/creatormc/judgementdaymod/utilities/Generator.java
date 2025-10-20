@@ -36,10 +36,9 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
 
 public class Generator {
-    // Calcola i giorni per fase (divide maxDays in 5 fasi da 20% ciascuna)
+    // Calculates days per phase (divides maxDays into 5 phases of 20% each)
     private static int daysPerPhase = ConfigManager.apocalypseMaxDays / 5;
-    private static int previousDay = 0 - daysPerPhase; // giorno 0 meno una fase per dare tempo al giocatore di
-                                                       // iniziare
+    private static int previousDay = 0 - daysPerPhase; // day 0 minus one phase to give the player time to start
 
     public static void handleDayEvent(int day, ServerPlayer player) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
@@ -50,32 +49,29 @@ public class Generator {
         if (world == null)
             return;
 
-        // Si sottrae una fase per partire dal giorno 0 con la prima fase e lasciare
-        // tempo al giocatore
+        // Subtract one phase to start at day 0 and give the player preparation time
         int phaseDay = day - daysPerPhase;
 
-        // Calcola a quale fase appartiene il giorno corrente
-        // prima dell'inizio
-        int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase); // -1, 0, 1, 2, 3, 4,
-                                                                                                  // 5
+        // Calculate which phase the current day belongs to (before the start)
+        int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase); // -1, 0, 1, 2, 3, 4, 5
         int previousPhaseNumber = Math.floorDiv(previousDay, daysPerPhase); // -1, 0, 1, 2, 3, 4, 5
 
         System.out.println("Current Phase: " + currentPhaseNumber + ", Previous Phase: " + previousPhaseNumber);
 
-        // Controlla se siamo passati a una nuova fase
+        // Check if we have entered a new phase
         if (currentPhaseNumber > previousPhaseNumber && phaseDay <= ConfigManager.apocalypseMaxDays) {
 
             previousDay = currentPhaseNumber;
 
-            // valori attuali di essiccamento e danno
+            // Current drying and damage heights
             int baseDamageHeight = ConfigManager.minDamageHeight;
             int baseWaterHeight = ConfigManager.minWaterEvaporationHeight;
 
-            // Calcola le nuove altezze in base alla fase
+            // Calculate new heights based on phase
             int newDamageHeight = baseDamageHeight - (currentPhaseNumber * (baseDamageHeight / 5));
             int newWaterHeight = baseWaterHeight - (currentPhaseNumber * (baseWaterHeight / 5));
 
-            // assicurati che non scendano sotto
+            // Ensure they do not go below zero
             ConfigManager.minDamageHeight = Math.max(newDamageHeight, 0);
             ConfigManager.minWaterEvaporationHeight = Math.max(newWaterHeight, 0);
 
@@ -83,29 +79,29 @@ public class Generator {
 
             resetPlayerChunks(player);
 
-            // Calcola la percentuale per Phase
+            // Calculate percentage for Phase
             int percent = Phase.toPercent(phaseDay, ConfigManager.apocalypseMaxDays);
             Phase currentPhase = Phase.getPhaseForPercent(percent);
 
-            // Invia title e subtitle
+            // Send title and subtitle
             player.connection.send(new ClientboundSetTitleTextPacket(currentPhase.getTitleComponent()));
             player.connection.send(new ClientboundSetSubtitleTextPacket(currentPhase.getDescriptionComponent()));
             player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
         }
 
-        // Al raggiungimento del massimo, attiva l'apocalisse finale
+        // Upon reaching the maximum, activate the final apocalypse
         if (phaseDay >= ConfigManager.apocalypseMaxDays && !ApocalypseManager.isApocalypseActive()) {
             ConfigManager.apocalypseCurrentDay = ConfigManager.apocalypseMaxDays;
             ApocalypseManager.startApocalypse();
 
-            // === DISATTIVA OGNI PIOGGIA ===
+            // === DISABLE ALL RAIN ===
             if (world.isRaining() || world.isThundering()) {
-                world.setWeatherParameters(0, 0, false, false); // forza cielo sereno immediato
+                world.setWeatherParameters(0, 0, false, false); // force clear sky immediately
             }
 
-            // Previene la riattivazione futura: tempo di sole infinito
+            // Prevent future reactivation: infinite sunlight
             world.setWeatherParameters(Integer.MAX_VALUE, 0, false, false);
-            System.out.println("[Apocalypse] Pioggia e temporali permanentemente disattivati.");
+            System.out.println("[Apocalypse] Rain and thunderstorms permanently disabled.");
 
             ConfigManager.save();
         }
@@ -132,37 +128,36 @@ public class Generator {
             final int maxBuildHeight = level.getMaxBuildHeight();
             final double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
-            // Cache delle blockstate più usate
+            // Cache of most used block states
             final BlockState ashState = ModBlocks.ASH_BLOCK.get().defaultBlockState();
             final BlockState fireState = Blocks.FIRE.defaultBlockState();
             final BlockState airState = Blocks.AIR.defaultBlockState();
 
-            // Ottimizzazione: ThreadLocalRandom più veloce per single-thread
+            // Optimization: ThreadLocalRandom faster for single-thread
             final ThreadLocalRandom random = ThreadLocalRandom.current();
             final float apocalypseThreshold = ConfigManager.apocalypseCurrentDay * 0.01f;
-            // Ottimizzazione: Pre-alloca con capacità realistica (max 256 blocchi per
-            // chunk)
+
+            // Optimization: preallocate realistic capacity (max 256 blocks per chunk)
             final List<BlockPos> changedPositions = new ArrayList<>(256);
             final boolean[] dirtySection = new boolean[sections.length];
 
-            // traccia colonne toccate
+            // Track touched columns
             final boolean[][] touchedColumn = new boolean[16][16];
 
-            // Cache per heightmap - accesso diretto più veloce
+            // Cache heightmap - faster direct access
             final Heightmap wsHM = lc.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
 
-            // Ottimizzazione: Pre-calcola gli indici delle sezioni per evitare divisioni
-            // ripetute
+            // Optimization: precompute section indexes to avoid repeated division
             final int sectionsCount = sections.length;
 
-            // prima viene rimossa l'acqua, si itera da -1 per risolvere un problema sul
-            // (fuso con le trasformazioni superficiali nello stesso doppio ciclo lx/lz)
+            // First remove water, iterate from -1 to solve overlapping issues
+            // (merged with surface transformations in same double loop lx/lz)
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
                     final int worldX = startX + lx;
                     final int worldZ = startZ + lz;
 
-                    // --- EVAPORAZIONE ---
+                    // --- EVAPORATION ---
                     if (percent >= 40.0) {
                         for (int removeY = maxBuildHeight - 1; removeY >= minBuildHeight; removeY--) {
                             int targetSecIndex = (removeY >> 4) - minSection;
@@ -177,19 +172,18 @@ public class Generator {
                             BlockState targetState = targetSection.getBlockState(lx, targetLy, lz);
 
                             if (Analyzer.isEvaporable(targetState)) {
-                                // Rimuove il blocco corrente
+                                // Remove the current block
                                 targetSection.setBlockState(lx, targetLy, lz, airState, false);
                                 dirtySection[targetSecIndex] = true;
                                 changedPositions.add(new BlockPos(worldX, removeY, worldZ));
 
-                                // Aggiorna localmente la heightmap per riflettere il nuovo blocco d'aria
+                                // Update heightmap to reflect air block
                                 wsHM.update(lx, removeY, lz, airState);
 
-                                // --- FIX MURI: se siamo su un bordo del chunk, svuota il blocco adiacente
-                                // nella sezione vicina --- todo, non bellissima in futuro valutare di
-                                // sistemarla
+                                // --- WALL FIX: if on chunk border, clear adjacent block in neighbor section ---
+                                // todo: not ideal, may refine later
                                 if (lx == 0 || lx == 15 || lz == 0 || lz == 15) {
-                                    // Vicino X
+                                    // Near X
                                     if (lx == 0 || lx == 15) {
                                         int nx = worldX + (lx == 0 ? -1 : 1);
                                         int neighborChunkX = nx >> 4;
@@ -218,7 +212,7 @@ public class Generator {
                                         }
                                     }
 
-                                    // Vicino Z
+                                    // Near Z
                                     if (lz == 0 || lz == 15) {
                                         int nz = worldZ + (lz == 0 ? -1 : 1);
                                         int neighborChunkX = worldX >> 4;
@@ -253,7 +247,7 @@ public class Generator {
 
                     }
 
-                    // --- TRASFORMAZIONE SUPERFICIALE ---
+                    // --- SURFACE TRANSFORMATION ---
                     if (random.nextFloat() <= apocalypseThreshold) {
                         int topY = wsHM.getFirstAvailable(lx, lz) - 1;
                         if (topY < minBuildHeight)
@@ -272,7 +266,7 @@ public class Generator {
                         int targetY = topY;
 
                         if (Analyzer.isSkippable(currentBlock)) {
-                            // Trova primo blocco non-cenere scendendo
+                            // Find first non-ash block descending
                             for (int y = topY - 1; y > minBuildHeight; y--) {
                                 final int checkSecIndex = (y >> 4) - minSection;
                                 if (checkSecIndex < 0 || checkSecIndex >= sectionsCount)
@@ -289,7 +283,7 @@ public class Generator {
 
                                 if (!Analyzer.isSkippable(foundBlock)) {
                                     targetY = y;
-                                    // Determina il tipo di trasformazione inline
+                                    // Determine transformation type inline
                                     if (Analyzer.canBurn(foundBlock, null, null)) {
                                         newState = fireState;
                                     } else if (Analyzer.isEvaporable(foundBlock)) {
@@ -301,7 +295,7 @@ public class Generator {
                                 }
                             }
                             if (targetY == topY)
-                                continue; // Nessun blocco trovato
+                                continue; // No block found
                         } else {
                             if (Analyzer.canBurn(currentBlock, null, null)) {
                                 newState = fireState;
@@ -326,11 +320,11 @@ public class Generator {
                 }
             }
 
-            // Early return se nessuna modifica
+            // Early return if no changes
             if (changedPositions.isEmpty())
                 return;
 
-            // Batch update delle sezioni
+            // Batch update modified sections
             for (int i = 0; i < sectionsCount; i++) {
                 if (dirtySection[i] && sections[i] != null) {
                     sections[i].recalcBlockCounts();
@@ -344,7 +338,7 @@ public class Generator {
             final Block fireBlockRef = Blocks.FIRE;
             final int tickDelay = 40;
 
-            // schedule ticks e falling blocks e correzione luci
+            // Schedule ticks, falling blocks, and light corrections
             for (BlockPos pos : changedPositions) {
                 BlockState state = level.getBlockState(pos);
 
@@ -365,54 +359,52 @@ public class Generator {
 
                 int lx = pos.getX() & 15;
                 int lz = pos.getZ() & 15;
-                touchedColumn[lx][lz] = true; // segno per aggiornamento dell'illuminazione
+                touchedColumn[lx][lz] = true; // mark for lighting update
             }
 
-            // Refresh intero chunk per aggiornamento lato client
+            // Refresh entire chunk for client updates
             ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(lc,
                     level.getLightEngine(), null, null);
 
-            // Pacchetto per "scordare" il chunk prima di reinviarlo
+            // Packet to "forget" the chunk before resending
             ClientboundForgetLevelChunkPacket forget = new ClientboundForgetLevelChunkPacket(chunkX, chunkZ);
 
             for (ServerPlayer viewer : level.players()) {
-                // Invia solo ai player che stanno effettivamente guardando questo chunk
+                // Send only to players currently viewing this chunk
                 if (level.getChunkSource().chunkMap.getPlayers(lc.getPos(), false).contains(viewer)) {
-                    // Fai "scordare" il chunk al client
+                    // Force client to forget chunk
                     viewer.connection.send(forget);
 
-                    // Attendi 1 tick prima di reinviare (serve per evitare che il client ignori
-                    // il resend)
+                    // Wait 1 tick before resending to prevent client ignoring resend
                     level.getServer().execute(() -> {
                         viewer.connection.send(packet);
                     });
                 }
             }
 
-            // dopo il bulk-edit, prima del pacchetto
+            // After bulk edit, before packet resend
             for (int lx = 0; lx < 16; lx++) {
                 for (int lz = 0; lz < 16; lz++) {
                     if (!touchedColumn[lx][lz])
                         continue;
-                    int topY = wsHM.getFirstAvailable(lx, lz); // sopra il top attuale
+                    int topY = wsHM.getFirstAvailable(lx, lz); // above current top
                     BlockPos pulse = new BlockPos(startX + lx, topY, startZ + lz);
 
-                    // metti una luce temporanea
+                    // Place temporary light
                     level.setBlock(pulse, Blocks.LIGHT.defaultBlockState(), Block.UPDATE_ALL);
-                    // rimuovi al tick successivo per non lasciare residui
+                    // Remove next tick to avoid leftovers
                     level.scheduleTick(pulse, Blocks.LIGHT, 1);
                 }
             }
 
         } catch (Exception e) {
-            System.err.println("Errore processChunk: " + e.getMessage());
+            System.err.println("Error processChunk: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
-    // il metodo rende tutti i chunk "unwatched"
-    // serve per poter ricaricare tutti i chunk quando scatta una nuova fase
-    // dell'apocalisse
+    // Makes all chunks "unwatched"
+    // Used to reload all chunks when a new apocalypse phase starts
     public static void resetPlayerChunks(ServerPlayer player) {
         if (player == null || player.hasDisconnected())
             return;
@@ -421,8 +413,7 @@ public class Generator {
         ChunkPos playerPos = new ChunkPos(player.blockPosition());
         int viewDistance = level.getServer().getPlayerList().getViewDistance() + 1;
 
-        // Accoda direttamente i chunk visibili alla stessa coda che svuoti in
-        // onServerTick
+        // Queue all visible chunks to the same queue emptied in onServerTick
         for (int dx = -viewDistance; dx <= viewDistance; dx++) {
             for (int dz = -viewDistance; dz <= viewDistance; dz++) {
                 int cx = playerPos.x + dx;

@@ -16,14 +16,14 @@ import com.creatormc.judgementdaymod.setup.ModBlocks;
 
 public class Analyzer {
 
-    // Cache per i risultati di canBurn - boost di performance
+    // Cache for canBurn results - performance boost
     private static final ConcurrentHashMap<Block, Boolean> burnCache = new ConcurrentHashMap<>(4096);
 
-    // Array statico per evitare allocazioni
+    // Static direction array to avoid allocations
     private static final Direction[] DIRECTIONS = Direction.values();
 
     /**
-     * Versione ottimizzata con caching
+     * Optimized version with caching
      */
     public static boolean canBurn(BlockState state, BlockGetter level, BlockPos pos) {
         if (state == null)
@@ -31,25 +31,23 @@ public class Analyzer {
 
         Block block = state.getBlock();
 
-        // Check cache first - MOLTO più veloce
+        // Check cache first - much faster
         Boolean cached = burnCache.get(block);
         if (cached != null)
             return cached;
 
-        // Solo se non in cache, calcola
         boolean canBurn = false;
 
-        // Check completo con direzioni
+        // Full directional check
         for (Direction dir : DIRECTIONS) {
             if (state.getFlammability(level, pos, dir) > 0 &&
                     block.getFireSpreadSpeed(state, level, pos, dir) > 0) {
                 canBurn = true;
                 break;
-
             }
         }
 
-        // Salva in cache (max 256 entries per evitare memory leak)
+        // Save in cache (max 4096 entries to avoid memory leaks)
         if (burnCache.size() < 4096) {
             burnCache.put(block, canBurn);
         }
@@ -58,33 +56,31 @@ public class Analyzer {
     }
 
     /**
-     * Controlla se un blocco deve essere "sorpassato" durante la ricerca del blocco
-     * di superficie.
-     * Include: cenere, fuoco, aria (tutti i tipi), light block.
-     * Usato per scendere sotto i blocchi temporanei/vuoti e trovare il primo blocco
-     * solido.
+     * Checks if a block should be skipped when finding the surface block.
+     * Includes: ash, fire, air (all types), light blocks.
+     * Used to go below temporary/empty blocks and find the first solid block.
      */
     public static boolean isSkippable(BlockState blockState) {
         if (blockState == null)
             return false;
 
-        // Blocchi temporanei o "fantasma" (light block per aggiornamento illuminazione)
+        // Temporary or "ghost" blocks (light blocks for lighting updates)
         if (blockState.is(Blocks.LIGHT) || blockState.getBlock() instanceof LightBlock) {
             return true;
         }
 
-        // Cenere (il custom block dell'apocalisse)
+        // Ash (custom apocalypse block)
         Block ashBlock = ModBlocks.ASH_BLOCK.get();
         if (blockState.is(ashBlock) || blockState.is(Blocks.BARRIER)) {
             return true;
         }
 
-        // Fuoco (normale e soul fire)
+        // Fire (normal and soul fire)
         if (blockState.is(Blocks.FIRE) || blockState.is(Blocks.SOUL_FIRE)) {
             return true;
         }
 
-        // Aria (tutti i tipi)
+        // Air (all variants)
         if (blockState.isAir()
                 || blockState.is(Blocks.AIR)
                 || blockState.is(Blocks.CAVE_AIR)
@@ -96,23 +92,23 @@ public class Analyzer {
     }
 
     /**
-     * Versione inline ottimizzata - più veloce per check frequenti
+     * Inline optimized version - faster for frequent checks
      */
     public static boolean isEvaporable(BlockState blockState) {
         if (blockState == null)
             return false;
 
-        // Check diretto sui blocchi più comuni prima
+        // Common quick checks first
         if (blockState.is(Blocks.WATER)) {
             return true;
         }
 
-        // blocchi di ghiaccio / neve
+        // Ice/snow blocks
         if (blockState.is(Blocks.ICE)
                 || blockState.is(Blocks.PACKED_ICE)
                 || blockState.is(Blocks.BLUE_ICE)
                 || blockState.is(Blocks.FROSTED_ICE)
-                || blockState.is(Blocks.SNOW) // strato di neve
+                || blockState.is(Blocks.SNOW)
                 || blockState.is(Blocks.SNOW_BLOCK)
                 || blockState.is(Blocks.BARRIER)
                 || blockState.is(Blocks.CAVE_AIR)
@@ -122,21 +118,21 @@ public class Analyzer {
             return true;
         }
 
-        // Check fluidi solo se necessario
+        // Fluid check only if needed
         FluidState fluid = blockState.getFluidState();
         return fluid.is(Fluids.WATER) || fluid.is(Fluids.FLOWING_WATER);
     }
 
     /**
-     * Versione ottimizzata con check inline
+     * Optimized inline version
      */
     public static boolean isMeldable(BlockState blockState, int apocalypseStage) {
-        // Check più comune prima (short-circuit evaluation)
+        // Common case first (short-circuit)
         return apocalypseStage >= 100 && !blockState.is(ModBlocks.ASH_BLOCK.get());
     }
 
     /**
-     * Metodo per pulire la cache se necessario (chiamare periodicamente)
+     * Clears the cache periodically to prevent stale data
      */
     public static void clearCache() {
         burnCache.clear();

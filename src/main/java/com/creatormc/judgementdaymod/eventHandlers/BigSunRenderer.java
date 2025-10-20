@@ -23,8 +23,8 @@ import org.joml.Matrix4f;
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, value = Dist.CLIENT)
 public class BigSunRenderer {
 
-    // uso una texture personalizzata per il sole uguale a quella originale ma senza
-    // il nero sotto
+    // uses a custom texture for the sun identical to the original but without
+    // the black background
     private static final ResourceLocation SUN_TEXTURE = new ResourceLocation(JudgementDayMod.MODID,
             "textures/environment/sun.png");
 
@@ -40,13 +40,13 @@ public class BigSunRenderer {
             return;
 
         boolean isAboveGround;
-        int yThreshold = 0; // altezza di riferimento
+        int yThreshold = 0; // reference height
 
         if (player.getY() >= yThreshold) {
-            // Sopra altezza: filtro sempre attivo
+            // Above height: filter always active
             isAboveGround = true;
         } else {
-            // Sotto altezza: filtro solo se vedi il cielo
+            // Below height: filter only if the sky is visible
             isAboveGround = level.canSeeSky(player.blockPosition());
         }
 
@@ -58,46 +58,46 @@ public class BigSunRenderer {
         PoseStack poseStack = event.getPoseStack();
         poseStack.pushPose();
 
-        // === Rotazione vanilla corretta ===
+        // === Correct vanilla rotation ===
         float sunAngle = level.getTimeOfDay(event.getPartialTick()) * 360.0F;
         poseStack.mulPose(Axis.YP.rotationDegrees(-90.0F));
         poseStack.mulPose(Axis.XP.rotationDegrees(sunAngle));
 
-        // === Parametri dinamici in base allo stage ===
+        // === Dynamic parameters based on phase ===
         float stage = (float) Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
         float factor = stage / 100.0F;
         long time = level.getGameTime();
-        float pulse = 1.0F; // valore base
-        // Quando factor = 0, comportamento vanilla
+        float pulse = 1.0F; // base value
+        // When factor = 0, vanilla behavior
         if (factor < 0.2F) {
             poseStack.popPose();
-            return; // Non modificare il sole vanilla
+            return; // Do not modify the vanilla sun
         }
-        if (factor > 0.8F) { // attivo solo nelle ultime fasi
-            float intensity = (factor - 0.8F) * 5.0F; // 0 → 1 tra 80% e 100%
+        if (factor > 0.8F) { // active only in the last phases
+            float intensity = (factor - 0.8F) * 5.0F; // 0 → 1 between 80% and 100%
             pulse = 1.0F + 0.05F * intensity * (float) Math.sin(time * 0.5F);
         }
-        float scale = (factor) * pulse; // grandezza dinamica
-        float distance = 100.0F - factor; // il sole si avvicina
-        float size = 30.0F * scale; // base vanilla 30
+        float scale = (factor) * pulse; // dynamic size
+        float distance = 100.0F - factor; // the sun gets closer
+        float size = 30.0F * scale; // vanilla base 30
 
-        // Colore gradualmente più rosso
+        // Gradually redder color
         float r = 1.0F;
-        float g = 1.0F - factor; // meno verde
-        float b = 0.5F - 0.4F * factor; // più caldo
+        float g = 1.0F - factor; // less green
+        float b = 0.5F - 0.4F * factor; // warmer tone
 
-        // === Stato di rendering ===
+        // === Rendering state ===
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShader(GameRenderer::getPositionTexShader);
         RenderSystem.setShaderTexture(0, SUN_TEXTURE);
-        RenderSystem.setShaderColor(r, g, b, 1.0F); // applica tinta colore
+        RenderSystem.setShaderColor(r, g, b, 1.0F); // apply color tint
 
         Matrix4f mat = poseStack.last().pose();
         Tesselator tess = Tesselator.getInstance();
         BufferBuilder buf = tess.getBuilder();
 
-        // === Sole ===
+        // === Sun ===
         buf.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
         buf.vertex(mat, -size, distance, -size).uv(0.0F, 0.0F).endVertex();
         buf.vertex(mat, size, distance, -size).uv(1.0F, 0.0F).endVertex();
@@ -105,7 +105,7 @@ public class BigSunRenderer {
         buf.vertex(mat, -size, distance, size).uv(0.0F, 1.0F).endVertex();
         tess.end();
 
-        // === Ripristino stato ===
+        // === Restore state ===
         RenderSystem.enableDepthTest();
         RenderSystem.disableBlend();
 
