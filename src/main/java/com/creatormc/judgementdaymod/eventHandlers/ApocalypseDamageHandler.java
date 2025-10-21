@@ -103,7 +103,9 @@ public class ApocalypseDamageHandler {
                     heat -= 0.15f;
                 if (isInCooling)
                     heat -= 0.4f;
-                if (!isUnderCover && !isInCooling)
+                if (isNight)
+                    heat -= 0.1f;
+                if (!isUnderCover && !isInCooling && !isNight)
                     heat += growth;
             } else {
                 if (y >= ConfigManager.minDamageHeight) {

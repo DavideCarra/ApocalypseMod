@@ -145,7 +145,7 @@ public class Generator {
             final int minSection = lc.getMinSection();
             final int minBuildHeight = ConfigManager.minWaterEvaporationHeight;
             final int maxBuildHeight = level.getMaxBuildHeight();
-            final double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
+            final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
             // Cache of most used block states
             final BlockState ashState = ModBlocks.ASH_BLOCK.get().defaultBlockState();
@@ -154,7 +154,7 @@ public class Generator {
 
             // Optimization: ThreadLocalRandom faster for single-thread
             final ThreadLocalRandom random = ThreadLocalRandom.current();
-            final float apocalypseThreshold = ConfigManager.apocalypseCurrentDay * 0.01f;
+            float apocalypseThreshold = percent / 100f;
 
             // Optimization: preallocate realistic capacity (max 256 blocks per chunk)
             final List<BlockPos> changedPositions = new ArrayList<>(256);

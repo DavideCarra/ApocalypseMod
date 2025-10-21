@@ -39,22 +39,22 @@ public class BigSunRenderer {
         if (level == null || !level.dimensionType().hasSkyLight() || player == null)
             return;
 
-        boolean isAboveGround;
-        int yThreshold = 0; // reference height
+        boolean isAboveDamageLimit;
+        int yThreshold = ConfigManager.minDamageHeight; // reference height
 
         if (player.getY() >= yThreshold) {
             // Above height: filter always active
-            isAboveGround = true;
+            isAboveDamageLimit = true;
         } else {
             // Below height: filter only if the sky is visible
-            isAboveGround = level.canSeeSky(player.blockPosition());
+            isAboveDamageLimit = level.canSeeSky(player.blockPosition());
         }
         // If apocalypse is over, do not change sun rendering
         if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
             return;
         }
 
-        if (!isAboveGround) {
+        if (!isAboveDamageLimit) {
             RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F); // reset
             return;
         }
