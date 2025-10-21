@@ -9,14 +9,21 @@ import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 
 import io.netty.util.internal.ThreadLocalRandom;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.ChunkPos;
@@ -35,6 +42,7 @@ public class Generator {
     private static int previousDay = 0 - daysPerPhase; // day 0 minus one phase to give the player time to start
     private static int decellerateDaysPerPhase = daysPerPhase * 2; // decellerate phase frequency: double duration of
                                                                    // normal phase
+    private static ApocalypsePhases.Phase lastPlayedPhase = null;
 
     public static void handleDayEvent(ServerPlayer player) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
@@ -44,6 +52,7 @@ public class Generator {
         ServerLevel world = server.getLevel(Level.OVERWORLD);
         if (world == null)
             return;
+        long gameTime = world.getGameTime();
 
         // Calculate which phase the current day belongs to (before the start)
         int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase); // -1, 0, 1, 2, 3, 4,
@@ -80,6 +89,13 @@ public class Generator {
             player.connection.send(new ClientboundSetTitleTextPacket(currentPhase.getTitleComponent()));
             player.connection.send(new ClientboundSetSubtitleTextPacket(currentPhase.getDescriptionComponent()));
             player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
+
+            // Start music for the new phase
+            if (ConfigManager.apocalypseCurrentDay <= ConfigManager.apocalypseEndDay
+                    ) {
+
+                playPhaseMusic(player, currentPhase);
+            }
         }
 
         // Upon reaching the maximum, activate the final apocalypse
@@ -447,6 +463,32 @@ public class Generator {
                 }
             }
         }
+    }
+
+    private static void playPhaseMusic(ServerPlayer player, ApocalypsePhases.Phase phase) {
+        System.out.println(phase);
+        if (phase == lastPlayedPhase)
+            return; // avoid unnecessary repetition
+        lastPlayedPhase = phase;
+
+        // Stop any previously playing music (both apocalypse and normal)
+        player.connection.send(new ClientboundStopSoundPacket(null, SoundSource.MUSIC));
+
+        // === If apocalypse is over ===
+        if (phase == ApocalypsePhases.Phase.PHASE_END) {
+            // Restore normal overworld music
+            player.playNotifySound(SoundEvents.MUSIC_GAME.value(), SoundSource.MUSIC, 1.0f, 1.0f);
+
+            System.out.println("[Apocalypse] Apocalypse ended — normal music restored.");
+            return;
+        }
+
+        // === Otherwise, play phase-specific apocalypse music ===
+        SoundEvent sound = phase.getMusicTrack().value();
+
+        player.playNotifySound(sound, SoundSource.MUSIC, 1.0f, 1.0f);
+
+        System.out.println("[Apocalypse] Playing music for phase: " + phase.name());
     }
 
 }

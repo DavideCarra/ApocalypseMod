@@ -1,5 +1,8 @@
 package com.creatormc.judgementdaymod.utilities;
 
+import net.minecraft.core.Holder;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 
@@ -7,24 +10,19 @@ public class ApocalypsePhases {
 
     public enum Phase {
         PHASE_1(0, 19, "apocalypse.phase1.title", "apocalypse.phase1.description",
-                ChatFormatting.YELLOW, ChatFormatting.GOLD),
-
+                ChatFormatting.YELLOW, ChatFormatting.GOLD, SoundEvents.MUSIC_GAME),
         PHASE_2(20, 39, "apocalypse.phase2.title", "apocalypse.phase2.description",
-                ChatFormatting.GOLD, ChatFormatting.RED),
-
+                ChatFormatting.GOLD, ChatFormatting.RED, SoundEvents.MUSIC_BIOME_DRIPSTONE_CAVES),
         PHASE_3(40, 59, "apocalypse.phase3.title", "apocalypse.phase3.description",
-                ChatFormatting.RED, ChatFormatting.DARK_RED),
-
+                ChatFormatting.RED, ChatFormatting.DARK_RED, SoundEvents.MUSIC_BIOME_CRIMSON_FOREST),
         PHASE_4(60, 79, "apocalypse.phase4.title", "apocalypse.phase4.description",
-                ChatFormatting.DARK_RED, ChatFormatting.DARK_PURPLE),
-
+                ChatFormatting.DARK_RED, ChatFormatting.DARK_PURPLE, SoundEvents.MUSIC_BIOME_DEEP_DARK),
         PHASE_5(80, 99, "apocalypse.phase5.title", "apocalypse.phase5.description",
-                ChatFormatting.DARK_PURPLE, ChatFormatting.BLACK),
-
+                ChatFormatting.DARK_PURPLE, ChatFormatting.BLACK, SoundEvents.MUSIC_BIOME_LUSH_CAVES),
         PHASE_6(100, 100, "apocalypse.phase6.title", "apocalypse.phase6.description",
-                ChatFormatting.BLACK, ChatFormatting.DARK_RED),
+                ChatFormatting.BLACK, ChatFormatting.DARK_RED, SoundEvents.MUSIC_DRAGON),
         PHASE_END(150, 150, "apocalypse.phase_end.title", "apocalypse.phase_end.description",
-                ChatFormatting.DARK_PURPLE, ChatFormatting.BLACK),;
+                ChatFormatting.DARK_PURPLE, ChatFormatting.BLACK, SoundEvents.MUSIC_CREDITS);
 
         private final int minPercent;
         private final int maxPercent;
@@ -32,15 +30,21 @@ public class ApocalypsePhases {
         private final String descriptionKey;
         private final ChatFormatting titleColor;
         private final ChatFormatting descColor;
+        private final Holder<SoundEvent> musicTrack;
 
         Phase(int minPercent, int maxPercent, String titleKey, String descriptionKey,
-                ChatFormatting titleColor, ChatFormatting descColor) {
+              ChatFormatting titleColor, ChatFormatting descColor, Holder<SoundEvent> musicTrack) {
             this.minPercent = minPercent;
             this.maxPercent = maxPercent;
             this.titleKey = titleKey;
             this.descriptionKey = descriptionKey;
             this.titleColor = titleColor;
             this.descColor = descColor;
+            this.musicTrack = musicTrack;
+        }
+
+        public Holder<SoundEvent> getMusicTrack() {
+            return musicTrack;
         }
 
         public Component getTitleComponent() {
