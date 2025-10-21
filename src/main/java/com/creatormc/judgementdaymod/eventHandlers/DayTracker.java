@@ -34,7 +34,7 @@ import java.lang.reflect.Field;
 public class DayTracker {
 
     private static long tickCount = 0;
-    private static final int TICKS_PER_DAY = 40;
+    private static long lastDayTime = -1;
 
     // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
@@ -74,8 +74,6 @@ public class DayTracker {
 
         tickCount++;
 
-        // long dayCount = level.getDayTime() / 24000L; use something like this later
-
         // Clear cached burnable blocks periodically
         if (tickCount % 1000 == 0) {
             Analyzer.clearCache();
@@ -83,12 +81,27 @@ public class DayTracker {
 
         // All online players:
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            if (tickCount % TICKS_PER_DAY == 0) {
-                int day = (int) (tickCount / TICKS_PER_DAY);
+            ServerLevel level = player.serverLevel();
+
+            long currentDayTime = level.getDayTime() % 24000L; // Time of day in ticks (0–23999)
+
+            // First tick after server start — initialize reference value
+            if (lastDayTime == -1) {
+                lastDayTime = currentDayTime;
+                return;
+            }
+
+            // Detect when day time "wraps around" (from 23999 back to 0)
+            // This happens when a full day passes, or when players sleep or use /time set
+            // day
+            if (currentDayTime < lastDayTime) {
                 ConfigManager.apocalypseCurrentDay++;
                 ConfigManager.save();
-                Generator.handleDayEvent(day, player);
+                Generator.handleDayEvent(player);
             }
+
+            // Update stored value for the next tick comparison
+            lastDayTime = currentDayTime;
         }
 
         // Process ONLY chunks in the queue (recently loaded ones)

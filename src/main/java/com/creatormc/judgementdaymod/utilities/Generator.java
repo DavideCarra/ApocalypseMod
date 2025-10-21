@@ -36,7 +36,7 @@ public class Generator {
     private static int decellerateDaysPerPhase = daysPerPhase * 2; // decellerate phase frequency: double duration of
                                                                    // normal phase
 
-    public static void handleDayEvent(int day, ServerPlayer player) {
+    public static void handleDayEvent(ServerPlayer player) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null)
             return;
@@ -49,7 +49,6 @@ public class Generator {
         int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase); // -1, 0, 1, 2, 3, 4,
                                                                                                   // 5
         int previousPhaseNumber = Math.floorDiv(previousDay, daysPerPhase); // -1, 0, 1, 2, 3, 4, 5
-
 
         // Check if we have entered a new phase
         if (currentPhaseNumber > previousPhaseNumber
