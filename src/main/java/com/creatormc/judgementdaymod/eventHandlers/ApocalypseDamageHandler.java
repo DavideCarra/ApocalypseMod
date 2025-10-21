@@ -33,6 +33,10 @@ public class ApocalypseDamageHandler {
         if (event.side.isClient() || event.phase != TickEvent.Phase.END)
             return;
 
+        // If apocalypse is over, do not damage entities
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+            return;
+        }
         Level level = event.level;
         if (!level.dimension().equals(Level.OVERWORLD))
             return;

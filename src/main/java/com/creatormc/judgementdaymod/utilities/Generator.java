@@ -8,10 +8,7 @@ import com.creatormc.judgementdaymod.setup.ModBlocks;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 
 import io.netty.util.internal.ThreadLocalRandom;
-import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.SectionPos;
-import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
@@ -20,8 +17,6 @@ import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.event.level.ChunkWatchEvent;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.ChunkPos;
@@ -29,7 +24,6 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FallingBlock;
-import net.minecraft.world.level.block.LightBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -39,6 +33,8 @@ public class Generator {
     // Calculates days per phase (divides maxDays into 5 phases of 20% each)
     private static int daysPerPhase = ConfigManager.apocalypseMaxDays / 5;
     private static int previousDay = 0 - daysPerPhase; // day 0 minus one phase to give the player time to start
+    private static int decellerateDaysPerPhase = daysPerPhase * 2; // decellerate phase frequency: double duration of
+                                                                   // normal phase
 
     public static void handleDayEvent(int day, ServerPlayer player) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
@@ -49,19 +45,17 @@ public class Generator {
         if (world == null)
             return;
 
-        // Subtract one phase to start at day 0 and give the player preparation time
-        int phaseDay = day - daysPerPhase;
-
         // Calculate which phase the current day belongs to (before the start)
-        int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase); // -1, 0, 1, 2, 3, 4, 5
+        int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase); // -1, 0, 1, 2, 3, 4,
+                                                                                                  // 5
         int previousPhaseNumber = Math.floorDiv(previousDay, daysPerPhase); // -1, 0, 1, 2, 3, 4, 5
 
-        System.out.println("Current Phase: " + currentPhaseNumber + ", Previous Phase: " + previousPhaseNumber);
 
         // Check if we have entered a new phase
-        if (currentPhaseNumber > previousPhaseNumber && phaseDay <= ConfigManager.apocalypseMaxDays) {
+        if (currentPhaseNumber > previousPhaseNumber
+                && ConfigManager.apocalypseCurrentDay <= ConfigManager.apocalypseMaxDays) {
 
-            previousDay = currentPhaseNumber;
+            previousDay = ConfigManager.apocalypseCurrentDay;
 
             // Current drying and damage heights
             int baseDamageHeight = ConfigManager.minDamageHeight;
@@ -72,15 +66,15 @@ public class Generator {
             int newWaterHeight = baseWaterHeight - (currentPhaseNumber * (baseWaterHeight / 5));
 
             // Ensure they do not go below zero
-            ConfigManager.minDamageHeight = Math.max(newDamageHeight, 0);
-            ConfigManager.minWaterEvaporationHeight = Math.max(newWaterHeight, 0);
+            ConfigManager.minDamageHeight = Math.max(newDamageHeight, -20);
+            ConfigManager.minWaterEvaporationHeight = Math.max(newWaterHeight, -20);
 
             ConfigManager.save();
 
             resetPlayerChunks(player);
 
             // Calculate percentage for Phase
-            int percent = Phase.toPercent(phaseDay, ConfigManager.apocalypseMaxDays);
+            int percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
             Phase currentPhase = Phase.getPhaseForPercent(percent);
 
             // Send title and subtitle
@@ -90,8 +84,9 @@ public class Generator {
         }
 
         // Upon reaching the maximum, activate the final apocalypse
-        if (phaseDay >= ConfigManager.apocalypseMaxDays && !ApocalypseManager.isApocalypseActive()) {
-            ConfigManager.apocalypseCurrentDay = ConfigManager.apocalypseMaxDays;
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays
+                && !ApocalypseManager.isApocalypseActive()
+                && ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay) {
             ApocalypseManager.startApocalypse();
 
             // === DISABLE ALL RAIN ===
@@ -103,12 +98,37 @@ public class Generator {
             world.setWeatherParameters(Integer.MAX_VALUE, 0, false, false);
             System.out.println("[Apocalypse] Rain and thunderstorms permanently disabled.");
 
-            ConfigManager.save();
+        } else if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+            world.setWeatherParameters(12000, 12000, false, false); // restore normal weather timing
+            System.out.println("[Apocalypse] Final stage reached — weather cycle restored.");
+        }
+
+        // === POST-APOCALYPSE EXTENSION PHASE ===
+        if (ApocalypseManager.isApocalypseActive()) {
+
+            // If we haven't reached the final configured day yet, continue "accelerated"
+            // progression
+            if (ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay) {
+                if (ConfigManager.apocalypseCurrentDay % decellerateDaysPerPhase == 0) {
+                    resetPlayerChunks(player);
+                }
+
+            } else if (ConfigManager.apocalypseCurrentDay == ConfigManager.apocalypseEndDay) {
+                // Send title and subtitle
+                player.connection.send(new ClientboundSetTitleTextPacket(Phase.PHASE_END.getTitleComponent()));
+                player.connection.send(new ClientboundSetSubtitleTextPacket(Phase.PHASE_END.getDescriptionComponent()));
+                player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
+            }
         }
     }
 
     @SuppressWarnings("resource")
     public static void processChunk(ChunkToProcess chunkInfo) {
+        // If apocalypse is over, do not process any more chunks
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+            return;
+        }
+
         try {
             final ServerLevel level = chunkInfo.getLevel();
             final int chunkX = chunkInfo.getChunkX();
@@ -158,8 +178,11 @@ public class Generator {
                     final int worldZ = startZ + lz;
 
                     // --- EVAPORATION ---
-                    if (percent >= 40.0) {
+                    if (percent >= 40.0 || ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays) {
                         for (int removeY = maxBuildHeight - 1; removeY >= minBuildHeight; removeY--) {
+                            if (removeY <= ConfigManager.minWaterEvaporationHeight) {
+                                break; // stop processing below the evaporation limit
+                            }
                             int targetSecIndex = (removeY >> 4) - minSection;
                             if (targetSecIndex < 0 || targetSecIndex >= sections.length)
                                 continue;
@@ -180,7 +203,8 @@ public class Generator {
                                 // Update heightmap to reflect air block
                                 wsHM.update(lx, removeY, lz, airState);
 
-                                // --- WALL FIX: if on chunk border, clear adjacent block in neighbor section ---
+                                // --- WALL FIX: if on chunk border, clear adjacent block in neighbor section
+                                // ---
                                 // todo: not ideal, may refine later
                                 if (lx == 0 || lx == 15 || lz == 0 || lz == 15) {
                                     // Near X

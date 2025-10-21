@@ -29,6 +29,11 @@ public class WaterEvaporateHandler {
         if (level.isClientSide)
             return;
 
+        // If apocalypse is over, do not evaporate water in buckets
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+            return;
+        }
+
         // Check if it’s any bucket containing water (including fish)
         Item item = player.getItemInHand(event.getHand()).getItem();
         if (item != Items.WATER_BUCKET &&

@@ -22,7 +22,9 @@ public class ApocalypsePhases {
                 ChatFormatting.DARK_PURPLE, ChatFormatting.BLACK),
 
         PHASE_6(100, 100, "apocalypse.phase6.title", "apocalypse.phase6.description",
-                ChatFormatting.BLACK, ChatFormatting.DARK_RED);
+                ChatFormatting.BLACK, ChatFormatting.DARK_RED),
+        PHASE_END(150, 150, "apocalypse.phase_end.title", "apocalypse.phase_end.description",
+                ChatFormatting.DARK_PURPLE, ChatFormatting.BLACK),;
 
         private final int minPercent;
         private final int maxPercent;

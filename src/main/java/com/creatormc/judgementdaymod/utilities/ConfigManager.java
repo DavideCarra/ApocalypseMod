@@ -15,10 +15,12 @@ public class ConfigManager {
 
     // Runtime cache of config values
     public static boolean apocalypseActive = false;
+    public static boolean startBeforeApocalypse = false; // Minimum height for water evaporation
     public static int apocalypseCurrentDay = 0;
     public static int apocalypseMaxDays = 100;
     public static int minDamageHeight = 100; // Minimum height for creature damage
     public static int minWaterEvaporationHeight = 80; // Minimum height for water evaporation
+    public static int apocalypseEndDay = 300;
 
     /**
      * Loads the config file into memory.
@@ -41,16 +43,27 @@ public class ConfigManager {
 
             apocalypseMaxDays = Integer.parseInt(
                     props.getProperty("apocalypseMaxDays", String.valueOf(apocalypseMaxDays)));
-
             apocalypseCurrentDay = Integer.parseInt(
-                    props.getProperty("apocalypseCurrentDay", String.valueOf(apocalypseCurrentDay)))
-                    - (apocalypseMaxDays / 5); // load first day but start from negative stage (before apocalypse)
+                    props.getProperty("apocalypseCurrentDay", String.valueOf(apocalypseCurrentDay)));
 
             minDamageHeight = Integer.parseInt(
                     props.getProperty("minDamageHeight", String.valueOf(minDamageHeight)));
 
             minWaterEvaporationHeight = Integer.parseInt(
                     props.getProperty("minWaterEvaporationHeight", String.valueOf(minWaterEvaporationHeight)));
+
+            startBeforeApocalypse = Boolean.parseBoolean(
+                    props.getProperty("startBeforeApocalypse", String.valueOf(startBeforeApocalypse)));
+
+            apocalypseEndDay = Integer.parseInt(
+                    props.getProperty("apocalypseEndDay", String.valueOf(apocalypseEndDay)));
+
+            // Apply offset only if startBeforeApocalypse is true
+            if (startBeforeApocalypse) {
+                startBeforeApocalypse = false;
+                apocalypseCurrentDay -= (apocalypseMaxDays / 5);
+                save();
+            }
 
             System.out.println("[JudgementDayMod] Config loaded successfully.");
 
@@ -64,13 +77,13 @@ public class ConfigManager {
      */
     public static void save() {
         Properties props = new Properties();
-        // TODO: verify that saving logic is correct given the subtraction in load()
-        apocalypseCurrentDay += (apocalypseMaxDays / 5);
         props.setProperty("apocalypseActive", String.valueOf(apocalypseActive));
         props.setProperty("apocalypseCurrentDay", String.valueOf(apocalypseCurrentDay));
         props.setProperty("apocalypseMaxDays", String.valueOf(apocalypseMaxDays));
         props.setProperty("minDamageHeight", String.valueOf(minDamageHeight));
         props.setProperty("minWaterEvaporationHeight", String.valueOf(minWaterEvaporationHeight));
+        props.setProperty("apocalypseEndDay", String.valueOf(apocalypseEndDay));
+        props.setProperty("startBeforeApocalypse", String.valueOf(startBeforeApocalypse));
 
         try {
             Files.createDirectories(CONFIG_PATH.getParent());

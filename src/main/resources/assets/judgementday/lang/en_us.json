@@ -15,5 +15,8 @@
   "apocalypse.phase5.description": "Everything turns to ash. Life becomes extinct. Only death remains.",
   
   "apocalypse.phase6.title": "PHASE 6: JUDGEMENT DAY",
-  "apocalypse.phase6.description": "There is no more hope. The apocalypse is complete. The world is ash."
+  "apocalypse.phase6.description": "There is no more hope. The apocalypse is complete. The world is ash.",
+
+  "apocalypse.phase_end.title": "FINAL PHASE: REBIRTH",
+  "apocalypse.phase_end.description": "The sun has calmed. You can return to the surface. The world is a desert of ash, but you survived."
 }

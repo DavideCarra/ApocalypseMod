@@ -144,6 +144,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
                 posSurface.set(startX + lx, y, startZ + lz);
                 posUnder1Block.set(startX + lx, y - 1, startZ + lz);
                 posUnder2Blocks.set(startX + lx, y - 2, startZ + lz);
+                
 
                 final BlockState cur1 = chunk.getBlockState(posSurface);
                 final BlockState cur2 = chunk.getBlockState(posUnder1Block);

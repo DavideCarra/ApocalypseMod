@@ -49,6 +49,10 @@ public class BigSunRenderer {
             // Below height: filter only if the sky is visible
             isAboveGround = level.canSeeSky(player.blockPosition());
         }
+        // If apocalypse is over, do not change sun rendering
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+            return;
+        }
 
         if (!isAboveGround) {
             RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F); // reset

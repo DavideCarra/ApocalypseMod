@@ -25,8 +25,13 @@ public class ApocalypseSky extends DimensionSpecialEffects {
         }
 
         // Normalize factor between 20% and 100% -> 0.0 to 1.0
-        double factor = (percent - 20.0) / 80.0;
+        double factor = 0.0f;
 
+        // If apocalypse is over, do not apply tint
+        if (!(ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay)) {
+            factor = (percent - 20.0) / 80.0;
+        }
+        
         // Apocalypse tint colors
         double apocalypseRed = 1.0;
         double apocalypseGreen = 0.2;
