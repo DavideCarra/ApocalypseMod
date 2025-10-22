@@ -5,7 +5,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.level.ChunkEvent;
 import net.minecraftforge.event.level.ChunkWatchEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
@@ -17,9 +16,11 @@ import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.ChunkGenerator;
-import net.minecraft.world.level.chunk.ChunkSource;
-
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ThreadLocalRandom;
 
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.ApocalypseChunkGenerator;
@@ -27,6 +28,7 @@ import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.Analyzer;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
+import com.creatormc.judgementdaymod.utilities.LightFixer;
 
 import java.lang.reflect.Field;
 
@@ -35,35 +37,31 @@ public class DayTracker {
 
     private static long tickCount = 0;
     private static long lastDayTime = -1;
+    private static final int CHUNKS_PER_TICK = 16;
 
     // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
 
-    @SubscribeEvent(priority = EventPriority.LOW) // Low priority to ensure the chunk is fully loaded
+    @SubscribeEvent(priority = EventPriority.LOW)
     public static void onChunkWatch(ChunkWatchEvent.Watch event) {
-        // Server side only
+        // Solo lato server
         if (event.getLevel().isClientSide()) {
             return;
         }
-
-        // Only for ServerLevel
-        if (!(event.getLevel() instanceof ServerLevel)) {
-            return;
-        }
-
         ServerLevel serverLevel = event.getLevel();
-        ChunkAccess chunk = event.getChunk();
-
-        // Verify it's a complete LevelChunk (not partially generated)
-        if (!(chunk instanceof LevelChunk)) {
+        ChunkAccess chunkAccess = event.getChunk();
+        if (!(chunkAccess instanceof LevelChunk chunk)) {
             return;
         }
 
-        // Do not modify the world now, just add it to the queue for later processing
         int chunkX = chunk.getPos().x;
         int chunkZ = chunk.getPos().z;
 
-        chunksToProcess.offer(new ChunkToProcess(serverLevel, chunkX, chunkZ));
+        // Inserisci chunk in the list
+        ChunkToProcess task = new ChunkToProcess(serverLevel, chunkX, chunkZ);
+        task.setRequiresLightFix(true);
+        chunksToProcess.offer(task);
+
     }
 
     @SubscribeEvent
@@ -104,10 +102,38 @@ public class DayTracker {
             lastDayTime = currentDayTime;
         }
 
-        // Process ONLY chunks in the queue (recently loaded ones)
-        ChunkToProcess chunkToProcess;
-        while ((chunkToProcess = chunksToProcess.poll()) != null) {
-            Generator.processChunk(chunkToProcess);
+        // --- PROCESS MULTI-CHUNK BATCH PER TICK + SHUFFLE ---
+        // Pull up to N tasks from the queue
+        List<ChunkToProcess> batch = new ArrayList<>(CHUNKS_PER_TICK);
+        for (int i = 0; i < CHUNKS_PER_TICK; i++) {
+            ChunkToProcess next = chunksToProcess.poll();
+            if (next == null)
+                break;
+            batch.add(next);
+        }
+        if (batch.isEmpty())
+            return;
+
+        // Randomize processing order to avoid visible sweeping lines
+        // Collections.shuffle(batch, ThreadLocalRandom.current());
+
+        Collections.shuffle(batch, ThreadLocalRandom.current());
+
+        // Process batch
+        List<ChunkToProcess> processed = new ArrayList<>();
+        for (ChunkToProcess task : batch) {
+            ServerLevel lvl = task.getLevel();
+            if (lvl == null || !lvl.getServer().isSameThread() || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+                continue;
+            }
+
+            // Do the work
+            Generator.processChunk(task);
+            processed.add(task);
+        }
+
+        if (!processed.isEmpty()) {
+            LightFixer.forceAreaLightUpdate(processed);
         }
 
     }
@@ -116,6 +142,12 @@ public class DayTracker {
     public static void onServerStarting(ServerStartingEvent event) {
         System.out.println("Server starting - installing Apocalypse ChunkGenerator...");
         ConfigManager.load();
+
+        // Reset variables
+        tickCount = 0;
+        lastDayTime = -1;
+        chunksToProcess.clear();
+        Generator.resetState();
 
         for (ServerLevel level : event.getServer().getAllLevels()) {
             if (level.dimension() == Level.OVERWORLD) {

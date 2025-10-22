@@ -7,6 +7,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LightBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.material.FluidState;
 
@@ -114,7 +115,12 @@ public class Analyzer {
                 || blockState.is(Blocks.CAVE_AIR)
                 || blockState.is(Blocks.VOID_AIR)
                 || blockState.is(Blocks.AIR)
+                || blockState.is(Blocks.LILY_PAD)
                 || blockState.getBlock() instanceof LightBlock) {
+            return true;
+        }
+        if (blockState.hasProperty(BlockStateProperties.WATERLOGGED)
+                && Boolean.TRUE.equals(blockState.getValue(BlockStateProperties.WATERLOGGED))) {
             return true;
         }
 
