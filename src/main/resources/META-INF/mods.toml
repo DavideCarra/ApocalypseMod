@@ -1,13 +1,6 @@
 modLoader="javafml"
 loaderVersion="[47,48)"
 license="MIT"
-
-[[mods]]
-modId="judgementday"
-version="1.0.0"
-displayName="Judgement Day"modLoader="javafml"
-loaderVersion="[47,48)"
-license="MIT"
 issueTrackerURL="https://github.com/creatormc/judgementdaymod/issues"
 
 [[mods]]
