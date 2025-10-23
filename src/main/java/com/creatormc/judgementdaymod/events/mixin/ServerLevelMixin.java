@@ -30,23 +30,25 @@ public class ServerLevelMixin {
     @SuppressWarnings("resource")
     @Inject(method = "<init>", at = @At("TAIL"))
     private void onInit(MinecraftServer server,
-                        Executor executor,
-                        LevelStorageSource.LevelStorageAccess storageAccess,
-                        ServerLevelData levelData,
-                        ResourceKey<Level> dimension,
-                        LevelStem levelStem,
-                        ChunkProgressListener progressListener,
-                        boolean isDebug,
-                        long seed,
-                        List<?> spawners,
-                        boolean tickTime,
-                        RandomSequences randomSequences,
-                        CallbackInfo ci) {
+            Executor executor,
+            LevelStorageSource.LevelStorageAccess storageAccess,
+            ServerLevelData levelData,
+            ResourceKey<Level> dimension,
+            LevelStem levelStem,
+            ChunkProgressListener progressListener,
+            boolean isDebug,
+            long seed,
+            List<?> spawners,
+            boolean tickTime,
+            RandomSequences randomSequences,
+            CallbackInfo ci) {
 
-        if (dimension != Level.OVERWORLD) return;
+        if (dimension != Level.OVERWORLD)
+            return;
 
         try {
-            JudgementDayMod.LOGGER.info("[JudgementDayMixin] Attempting to install ApocalypseChunkGenerator for Overworld...");
+            JudgementDayMod.LOGGER
+                    .info("[JudgementDayMixin] Attempting to install ApocalypseChunkGenerator for Overworld...");
 
             // Access the real server chunk cache
             ServerLevel level = (ServerLevel) (Object) this;
@@ -60,19 +62,14 @@ public class ServerLevelMixin {
             }
 
             // Create the Apocalypse generator wrapper
-            ApocalypseChunkGenerator apocalypseGenerator =
-                    new ApocalypseChunkGenerator(originalGenerator, ((ChunkGeneratorAccessor) originalGenerator).getBiomeSource_JD());
+            ApocalypseChunkGenerator apocalypseGenerator = new ApocalypseChunkGenerator(originalGenerator,
+                    ((ChunkGeneratorAccessor) originalGenerator).getBiomeSource_JD());
 
             // Replace the private generator field in ChunkMap
-            Field chunkMapField = ServerChunkCache.class.getDeclaredField("chunkMap");
-            chunkMapField.setAccessible(true);
-            ChunkMap chunkMap = (ChunkMap) chunkMapField.get(serverChunkCache);
+            ChunkMap chunkMap = ((ServerChunkCacheAccessor) serverChunkCache).getChunkMap_JD();
+            ((ChunkMapAccessor) chunkMap).setGenerator_JD(apocalypseGenerator);
 
-            Field generatorField = ChunkMap.class.getDeclaredField("generator");
-            generatorField.setAccessible(true);
-            generatorField.set(chunkMap, apocalypseGenerator);
-
-           JudgementDayMod.LOGGER.info("[JudgementDayMixin] ApocalypseChunkGenerator successfully installed!");
+            JudgementDayMod.LOGGER.info("[JudgementDayMixin] ApocalypseChunkGenerator successfully installed!");
 
         } catch (Exception e) {
             System.err.println("[JudgementDayMixin] Failed to install ApocalypseChunkGenerator:");

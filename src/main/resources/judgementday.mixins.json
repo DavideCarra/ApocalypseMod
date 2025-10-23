@@ -6,7 +6,9 @@
     "refmap": "judgementday.refmap.json",
     "mixins": [
         "ServerLevelMixin",
-        "ChunkGeneratorAccessor"
+        "ChunkGeneratorAccessor",
+        "ServerChunkCacheAccessor",
+        "ChunkMapAccessor"
     ],
     "injectors": {
         "defaultRequire": 1
