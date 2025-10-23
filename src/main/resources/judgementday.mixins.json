@@ -3,11 +3,10 @@
     "minVersion": "0.8",
     "package": "com.creatormc.judgementdaymod.events.mixin",
     "compatibilityLevel": "JAVA_17",
-    "refmap": "judgementdaymod.refmap.json",
+    "refmap": "judgementday.refmap.json",
     "mixins": [
         "ServerLevelMixin",
-        "ChunkGeneratorAccessor",
-        "LevelStemAccessor"
+        "ChunkGeneratorAccessor"
     ],
     "injectors": {
         "defaultRequire": 1
