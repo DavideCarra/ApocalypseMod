@@ -5,4 +5,33 @@ license="MIT"
 [[mods]]
 modId="judgementday"
 version="1.0.0"
+displayName="Judgement Day"modLoader="javafml"
+loaderVersion="[47,48)"
+license="MIT"
+issueTrackerURL="https://github.com/creatormc/judgementdaymod/issues"
+
+[[mods]]
+modId="judgementday"
+version="1.0.0"
 displayName="Judgement Day"
+authors="CreatorMC"
+credits="Created by CreatorMC"
+description='''
+Transforms the Minecraft world into an apocalyptic wasteland.
+Each day brings new environmental decay and dangers.
+'''
+
+# --- Dependencies ---
+[[dependencies.judgementday]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.judgementday]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="BOTH"
