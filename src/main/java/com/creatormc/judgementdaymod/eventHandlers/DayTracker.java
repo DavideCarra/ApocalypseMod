@@ -38,9 +38,13 @@ public class DayTracker {
     private static long tickCount = 0;
     private static long lastDayTime = -1;
     private static final int CHUNKS_PER_TICK = 16;
+    private static final int CHUNKS_LIGHT_PER_TICK = 16;
 
     // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
+
+    // Thread-safe queue to process lights in the next tick
+    private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToLightUpdate = new ConcurrentLinkedQueue<>();
 
     @SubscribeEvent(priority = EventPriority.LOW)
     public static void onChunkWatch(ChunkWatchEvent.Watch event) {
@@ -59,8 +63,8 @@ public class DayTracker {
 
         // Inserisci chunk in the list
         ChunkToProcess task = new ChunkToProcess(serverLevel, chunkX, chunkZ);
-        task.setRequiresLightFix(true);
         chunksToProcess.offer(task);
+        chunksToLightUpdate.offer(task);
 
     }
 
@@ -104,36 +108,53 @@ public class DayTracker {
 
         // --- PROCESS MULTI-CHUNK BATCH PER TICK + SHUFFLE ---
         // Pull up to N tasks from the queue
-        List<ChunkToProcess> batch = new ArrayList<>(CHUNKS_PER_TICK);
+        List<ChunkToProcess> batchToProcesses = new ArrayList<>(CHUNKS_PER_TICK);
+        List<ChunkToProcess> batchToFixLight = new ArrayList<>(CHUNKS_LIGHT_PER_TICK);
+
         for (int i = 0; i < CHUNKS_PER_TICK; i++) {
             ChunkToProcess next = chunksToProcess.poll();
             if (next == null)
                 break;
-            batch.add(next);
+            batchToProcesses.add(next);
         }
-        if (batch.isEmpty())
-            return;
 
-        // Randomize processing order to avoid visible sweeping lines
-        // Collections.shuffle(batch, ThreadLocalRandom.current());
+        for (int i = 0; i < CHUNKS_LIGHT_PER_TICK; i++) {
+            ChunkToProcess next = chunksToLightUpdate.poll();
+            if (next == null)
+                break;
+            batchToFixLight.add(next);
+        }
 
-        Collections.shuffle(batch, ThreadLocalRandom.current());
+        if (!batchToProcesses.isEmpty()) {
+            // Randomize processing order to avoid visible sweeping lines
+            // Collections.shuffle(batch, ThreadLocalRandom.current());
+            Collections.shuffle(batchToProcesses, ThreadLocalRandom.current());
 
-        // Process batch
-        List<ChunkToProcess> processed = new ArrayList<>();
-        for (ChunkToProcess task : batch) {
-            ServerLevel lvl = task.getLevel();
-            if (lvl == null || !lvl.getServer().isSameThread() || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
-                continue;
+            // Process batch
+            for (ChunkToProcess task : batchToProcesses) {
+                ServerLevel lvl = task.getLevel();
+                if (lvl == null || !lvl.getServer().isSameThread()
+                        || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+                    continue;
+                }
+
+                // Do the work
+                Generator.processChunk(task);
+                chunksToLightUpdate.offer(task);
             }
-
-            // Do the work
-            Generator.processChunk(task);
-            processed.add(task);
         }
 
-        if (!processed.isEmpty()) {
-            LightFixer.forceAreaLightUpdate(processed);
+        if (!batchToFixLight.isEmpty()) {
+            for (ChunkToProcess task : batchToFixLight) {
+                ServerLevel lvl = task.getLevel();
+                if (lvl == null || !lvl.getServer().isSameThread()
+                        || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+                    continue;
+                }
+                // fix the lights
+                LevelChunk chunk = lvl.getChunk(task.getChunkX(), task.getChunkZ());
+                LightFixer.forceLightUpdate(lvl, chunk);
+            }
         }
 
     }
@@ -158,6 +179,10 @@ public class DayTracker {
 
     public static void enqueueChunk(ChunkToProcess c) {
         chunksToProcess.offer(c);
+    }
+
+    public static void enqueueLightUpdateChunk(ChunkToProcess c) {
+        chunksToLightUpdate.offer(c);
     }
 
     private static void replaceOverworldGenerator(ServerLevel level) {

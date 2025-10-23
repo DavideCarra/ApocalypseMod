@@ -469,8 +469,8 @@ public class Generator {
                 LevelChunk chunk = level.getChunk(cx, cz);
                 if (chunk != null) {
                     ChunkToProcess task = new ChunkToProcess(level, cx, cz);
-                    task.setRequiresLightFix(true);
                     DayTracker.enqueueChunk(task);
+                    DayTracker.enqueueLightUpdateChunk(task);
                 }
             }
         }
