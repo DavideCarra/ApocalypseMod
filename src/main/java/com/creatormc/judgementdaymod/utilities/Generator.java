@@ -2,8 +2,10 @@ package com.creatormc.judgementdaymod.utilities;
 
 import java.util.ArrayList;
 import java.util.List;
-import com.creatormc.judgementdaymod.eventHandlers.DayTracker;
+
+import com.creatormc.judgementdaymod.handlers.DayTracker;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
+import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.setup.ModBlocks;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 
@@ -101,11 +103,11 @@ public class Generator {
                 world.setWeatherParameters(0, 0, false, false);
             }
             world.setWeatherParameters(Integer.MAX_VALUE, 0, false, false);
-            System.out.println("[Apocalypse] Rain and thunderstorms permanently disabled.");
+            JudgementDayMod.LOGGER.info("[Apocalypse] Rain and thunderstorms permanently disabled.");
 
         } else if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
             world.setWeatherParameters(12000, 12000, false, false);
-            System.out.println("[Apocalypse] Final stage reached — weather cycle restored.");
+            JudgementDayMod.LOGGER.info("[Apocalypse] Final stage reached — weather cycle restored.");
         }
 
         // Post-apocalypse extension phase
@@ -491,14 +493,14 @@ public class Generator {
         // If apocalypse is over, restore normal music
         if (phase == ApocalypsePhases.Phase.PHASE_END) {
             player.playNotifySound(SoundEvents.MUSIC_GAME.value(), SoundSource.MUSIC, 1.0f, 1.0f);
-            System.out.println("[Apocalypse] Apocalypse ended — normal music restored.");
+            JudgementDayMod.LOGGER.info("[Apocalypse] Apocalypse ended — normal music restored.");
             return;
         }
 
         // Play phase-specific apocalypse music
         SoundEvent sound = phase.getMusicTrack().value();
         player.playNotifySound(sound, SoundSource.MUSIC, 1.0f, 1.0f);
-        System.out.println("[Apocalypse] Playing music for phase: " + phase.name());
+        JudgementDayMod.LOGGER.info("[Apocalypse] Playing music for phase: " + phase.name());
     }
 
     public static void resetState() {
@@ -507,6 +509,6 @@ public class Generator {
         decelerateDaysPerPhase = daysPerPhase * 2;
         lastPlayedPhase = null;
 
-        System.out.println("[Apocalypse] Generator state reset (daysPerPhase=" + daysPerPhase + ")");
+        JudgementDayMod.LOGGER.info("[Apocalypse] Generator state reset (daysPerPhase=" + daysPerPhase + ")");
     }
 }

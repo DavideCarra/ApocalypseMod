@@ -1,4 +1,4 @@
-package com.creatormc.judgementdaymod.eventHandlers;
+package com.creatormc.judgementdaymod.handlers;
 
 import com.creatormc.judgementdaymod.models.HeatSyncPacket;
 import net.minecraft.resources.ResourceLocation;
@@ -10,9 +10,8 @@ import net.minecraft.server.level.ServerPlayer;
 public class NetworkHandler {
     private static final String PROTOCOL_VERSION = "1";
     private static int packetId = 0;
-
     public static final SimpleChannel INSTANCE = NetworkRegistry.newSimpleChannel(
-            new ResourceLocation("judgementday", "main"),
+            ResourceLocation.fromNamespaceAndPath("judgementday", "main"),
             () -> PROTOCOL_VERSION,
             PROTOCOL_VERSION::equals,
             PROTOCOL_VERSION::equals);

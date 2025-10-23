@@ -119,6 +119,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
     // ==== Surface replacement only when apocalypse is ON ====
     @Override
     public void buildSurface(WorldGenRegion region, StructureManager sm, RandomState rs, ChunkAccess chunk) {
+
         // vanilla surface
         before.buildSurface(region, sm, rs, chunk);
 

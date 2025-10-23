@@ -1,4 +1,4 @@
-package com.creatormc.judgementdaymod.eventHandlers;
+package com.creatormc.judgementdaymod.handlers;
 
 import com.creatormc.judgementdaymod.models.ClientHeatData;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;

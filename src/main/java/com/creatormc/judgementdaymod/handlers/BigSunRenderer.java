@@ -1,4 +1,4 @@
-package com.creatormc.judgementdaymod.eventHandlers;
+package com.creatormc.judgementdaymod.handlers;
 
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
@@ -25,8 +25,7 @@ public class BigSunRenderer {
 
     // uses a custom texture for the sun identical to the original but without
     // the black background
-    private static final ResourceLocation SUN_TEXTURE = new ResourceLocation(JudgementDayMod.MODID,
-            "textures/environment/sun.png");
+    private static final ResourceLocation SUN_TEXTURE = ResourceLocation.fromNamespaceAndPath(JudgementDayMod.MODID, "textures/environment/sun.png");
 
     @SubscribeEvent
     public static void onRenderSky(RenderLevelStageEvent event) {

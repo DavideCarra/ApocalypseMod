@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
+import com.creatormc.judgementdaymod.setup.JudgementDayMod;
+
 public class ConfigManager {
 
     private static final Path CONFIG_PATH = FMLPaths.CONFIGDIR.get().resolve("judgementdaymod-apocalypse.properties");
@@ -34,7 +36,7 @@ public class ConfigManager {
         Properties props = new Properties();
 
         if (!Files.exists(CONFIG_PATH)) {
-            System.out.println("[JudgementDayMod] Config not found, creating with default values.");
+            JudgementDayMod.LOGGER.info("[JudgementDayMod] Config not found, creating with default values.");
             save(); // create the file with default values
             return;
         }
@@ -69,10 +71,10 @@ public class ConfigManager {
                 save();
             }
 
-            System.out.println("[JudgementDayMod] Config loaded successfully.");
+            JudgementDayMod.LOGGER.info("[JudgementDayMod] Config loaded successfully.");
 
         } catch (IOException e) {
-            System.err.println("[JudgementDayMod] Error reading config: " + e.getMessage());
+            JudgementDayMod.LOGGER.error("[JudgementDayMod] Error reading config: " + e.getMessage());
         }
     }
 
@@ -96,10 +98,10 @@ public class ConfigManager {
                 props.store(out, "JudgementDayMod Apocalypse Config");
             }
 
-            System.out.println("[JudgementDayMod] Config saved to " + CONFIG_PATH);
+            JudgementDayMod.LOGGER.info("[JudgementDayMod] Config saved to " + CONFIG_PATH);
 
         } catch (IOException e) {
-            System.err.println("[JudgementDayMod] Error saving config: " + e.getMessage());
+            JudgementDayMod.LOGGER.error("[JudgementDayMod] Error saving config: " + e.getMessage());
         }
     }
 }

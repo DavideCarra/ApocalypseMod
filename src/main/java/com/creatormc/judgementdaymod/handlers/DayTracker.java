@@ -1,4 +1,4 @@
-package com.creatormc.judgementdaymod.eventHandlers;
+package com.creatormc.judgementdaymod.handlers;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -161,7 +161,6 @@ public class DayTracker {
 
     @SubscribeEvent
     public static void onServerStarting(ServerStartingEvent event) {
-        System.out.println("Server starting - installing Apocalypse ChunkGenerator...");
         ConfigManager.load();
 
         // Reset variables
@@ -169,12 +168,6 @@ public class DayTracker {
         lastDayTime = -1;
         chunksToProcess.clear();
         Generator.resetState();
-
-        for (ServerLevel level : event.getServer().getAllLevels()) {
-            if (level.dimension() == Level.OVERWORLD) {
-                replaceOverworldGenerator(level);
-            }
-        }
     }
 
     public static void enqueueChunk(ChunkToProcess c) {
@@ -183,34 +176,6 @@ public class DayTracker {
 
     public static void enqueueLightUpdateChunk(ChunkToProcess c) {
         chunksToLightUpdate.offer(c);
-    }
-
-    private static void replaceOverworldGenerator(ServerLevel level) {
-        try {
-            // Cast to ServerChunkCache instead of ChunkSource
-            ServerChunkCache serverChunkCache = (ServerChunkCache) level.getChunkSource();
-            ChunkGenerator originalGenerator = serverChunkCache.getGenerator();
-
-            // Create your custom generator wrapper
-            ApocalypseChunkGenerator apocalypseGenerator = new ApocalypseChunkGenerator(
-                    originalGenerator,
-                    originalGenerator.getBiomeSource());
-
-            // Use reflection to replace the generator inside the ChunkMap
-            Field chunkMapField = ServerChunkCache.class.getDeclaredField("chunkMap");
-            chunkMapField.setAccessible(true);
-            ChunkMap chunkMap = (ChunkMap) chunkMapField.get(serverChunkCache);
-
-            Field generatorField = ChunkMap.class.getDeclaredField("generator");
-            generatorField.setAccessible(true);
-            generatorField.set(chunkMap, apocalypseGenerator);
-
-            System.out.println("Apocalypse ChunkGenerator installed for Overworld!");
-
-        } catch (Exception e) {
-            System.err.println("Failed to install Apocalypse ChunkGenerator:");
-            e.printStackTrace();
-        }
     }
 
 }
