@@ -15,12 +15,16 @@ public class ConfigManager {
 
     // Runtime cache of config values
     public static boolean apocalypseActive = false;
-    public static boolean startBeforeApocalypse = true; // start a stage before apocalypse
+    public static boolean startBeforeApocalypse = false; // start a stage before apocalypse
     public static int apocalypseCurrentDay = 0;
     public static int apocalypseMaxDays = 50;
     public static int minDamageHeight = 60; // Minimum height for creature damage
     public static int minWaterEvaporationHeight = 60; // Minimum height for water evaporation
     public static int apocalypseEndDay = 200;
+
+    static {
+        apocalypseCurrentDay = startBeforeApocalypse ? -20 : 0;
+    }
 
     /**
      * Loads the config file into memory.
