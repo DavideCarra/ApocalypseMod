@@ -127,7 +127,8 @@ public class Generator {
     @SuppressWarnings("resource")
     public static void processChunk(ChunkToProcess chunkInfo) {
         // If apocalypse is over, do not process any more chunks
-        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay
+                || ConfigManager.apocalypseCurrentDay < 0) {
             return;
         }
 
@@ -135,8 +136,6 @@ public class Generator {
             final ServerLevel level = chunkInfo.getLevel();
             final int chunkX = chunkInfo.getChunkX();
             final int chunkZ = chunkInfo.getChunkZ();
-            final int startX = chunkX << 4;
-            final int startZ = chunkZ << 4;
 
             // Early returns for safety
             if (!level.getServer().isSameThread() || !level.hasChunk(chunkX, chunkZ)) {

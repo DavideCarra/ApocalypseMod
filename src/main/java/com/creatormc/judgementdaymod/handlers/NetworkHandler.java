@@ -1,5 +1,6 @@
 package com.creatormc.judgementdaymod.handlers;
 
+import com.creatormc.judgementdaymod.models.ApocalypseSyncPacket;
 import com.creatormc.judgementdaymod.models.HeatSyncPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkRegistry;
@@ -21,6 +22,11 @@ public class NetworkHandler {
                 HeatSyncPacket::toBytes,
                 HeatSyncPacket::new,
                 HeatSyncPacket::handle);
+
+        INSTANCE.registerMessage(packetId++, ApocalypseSyncPacket.class,
+                ApocalypseSyncPacket::toBytes,
+                ApocalypseSyncPacket::new,
+                ApocalypseSyncPacket::handle);
     }
 
     public static void sendToClient(Object msg, ServerPlayer player) {

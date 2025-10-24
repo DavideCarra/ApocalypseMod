@@ -12,25 +12,19 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ChunkMap;
-import net.minecraft.server.level.ServerChunkCache;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.chunk.ChunkGenerator;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ThreadLocalRandom;
 
+import com.creatormc.judgementdaymod.models.ApocalypseSyncPacket;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
-import com.creatormc.judgementdaymod.setup.ApocalypseChunkGenerator;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.Analyzer;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
 import com.creatormc.judgementdaymod.utilities.LightFixer;
-
-import java.lang.reflect.Field;
 
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class DayTracker {
@@ -100,6 +94,13 @@ public class DayTracker {
                 ConfigManager.apocalypseCurrentDay++;
                 ConfigManager.save();
                 Generator.handleDayEvent(player);
+
+                NetworkHandler.sendToClient(
+                        new ApocalypseSyncPacket(
+                                ConfigManager.apocalypseCurrentDay,
+                                ConfigManager.apocalypseMaxDays,
+                                ConfigManager.apocalypseActive),
+                        player);
             }
 
             // Update stored value for the next tick comparison

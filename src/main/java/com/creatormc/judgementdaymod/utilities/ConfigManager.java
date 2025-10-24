@@ -25,7 +25,7 @@ public class ConfigManager {
     public static int apocalypseEndDay = 200;
 
     static {
-        apocalypseCurrentDay = startBeforeApocalypse ? -20 : 0;
+        apocalypseCurrentDay = startBeforeApocalypse ? - (apocalypseMaxDays / 5): 0;
     }
 
     /**
