@@ -14,6 +14,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.living.LivingDeathEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
@@ -24,6 +25,7 @@ public class ApocalypseDamageHandler {
 
     private static int tickCounter = 0;
     private static final int TICK_INTERVAL = 20; // 1 second
+    private static final Map<UUID, Boolean> skyCache = new HashMap<>();
 
     // Map UUID → heat level (0–10)
     private static final Map<UUID, Float> heatLevels = new HashMap<>();
@@ -34,7 +36,8 @@ public class ApocalypseDamageHandler {
             return;
 
         // If apocalypse is over, do not damage entities
-        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay
+                || ConfigManager.apocalypseCurrentDay < 0) {
             return;
         }
         Level level = event.level;
@@ -55,17 +58,14 @@ public class ApocalypseDamageHandler {
         Set<UUID> seen = new HashSet<>();
         List<LivingEntity> allLiving = new ArrayList<>();
 
-        AABB searchBox = new AABB(
-                -30_000_000, ConfigManager.minDamageHeight, -30_000_000,
-                30_000_000, 320, 30_000_000);
-
-        for (LivingEntity e : serverLevel.getEntitiesOfClass(LivingEntity.class, searchBox))
-            if (seen.add(e.getUUID()))
-                allLiving.add(e);
-
-        for (ServerPlayer p : serverLevel.players())
-            if (seen.add(p.getUUID()))
-                allLiving.add(p);
+        for (ServerPlayer p : serverLevel.players()) {
+            AABB box = p.getBoundingBox().inflate(64);
+            for (LivingEntity e : serverLevel.getEntitiesOfClass(LivingEntity.class, box)) {
+                if (seen.add(e.getUUID()))
+                    allLiving.add(e);
+            }
+            allLiving.add(p);
+        }
 
         // Loop through all living entities
         for (LivingEntity entity : allLiving) {
@@ -76,7 +76,7 @@ public class ApocalypseDamageHandler {
             UUID id = entity.getUUID();
             float heat = heatLevels.getOrDefault(id, 0f);
 
-            boolean isUnderCover = !level.canSeeSky(entity.blockPosition());
+            boolean isUnderCover;
             boolean isInWater = entity.isInWater();
             boolean isInRain = level.isRainingAt(entity.blockPosition());
             boolean isInBubble = entity.getBlockStateOn().is(Blocks.BUBBLE_COLUMN);
@@ -89,14 +89,16 @@ public class ApocalypseDamageHandler {
             if (percent < 0)
                 continue;
 
+            if (entity.getY() < ConfigManager.minDamageHeight - 5) {
+                isUnderCover = true; // no need to check the sky this deep
+            } else {
+                isUnderCover = !level.canSeeSky(entity.blockPosition());
+            }
+
             // Normalize [0..1]
             float pctNorm = (float) Math.max(0, Math.min(1.0, percent / 100.0));
 
             if (percent < 20.0) {
-                // Initial phase: no effect at night
-                if (isNight)
-                    continue;
-
                 float growth = 0.25f;
 
                 if (isUnderCover)
@@ -166,9 +168,28 @@ public class ApocalypseDamageHandler {
         }
 
         // Cleanup map to avoid memory accumulation
-        heatLevels.keySet().removeIf(entryId -> {
-            var e = serverLevel.getEntity(entryId);
-            return e == null || e.isRemoved();
-        });
+        if (serverLevel.getGameTime() % 1200 == 0) { // every 60 seconds
+            heatLevels.keySet().removeIf(id -> serverLevel.getEntity(id) == null);
+            // Periodically clean up the sky visibility cache to prevent memory growth
+            skyCache.keySet().removeIf(id -> {
+                var e = serverLevel.getEntity(id);
+                return e == null || e.isRemoved();
+            });
+        }
+    }
+
+    @SubscribeEvent
+    public static void onEntityDeath(LivingDeathEvent event) {
+        LivingEntity entity = event.getEntity();
+        UUID id = entity.getUUID();
+
+        // Remove from maps
+        heatLevels.remove(id);
+        skyCache.remove(id);
+
+        // Send reset packet to client (if player)
+        if (entity instanceof ServerPlayer serverPlayer) {
+            NetworkHandler.sendToClient(new HeatSyncPacket(0f), serverPlayer);
+        }
     }
 }
