@@ -32,7 +32,8 @@ public class DayTracker {
     private static long tickCount = 0;
     private static long lastDayTime = -1;
     private static final int CHUNKS_PER_TICK = 16;
-    private static final int CHUNKS_LIGHT_PER_TICK = 16;
+    // private static final int CHUNKS_LIGHT_PER_TICK = 16; //TODO remove in future
+    // releases
 
     // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
@@ -110,7 +111,8 @@ public class DayTracker {
         // --- PROCESS MULTI-CHUNK BATCH PER TICK + SHUFFLE ---
         // Pull up to N tasks from the queue
         List<ChunkToProcess> batchToProcesses = new ArrayList<>(CHUNKS_PER_TICK);
-        List<ChunkToProcess> batchToFixLight = new ArrayList<>(CHUNKS_LIGHT_PER_TICK);
+        // List<ChunkToProcess> batchToFixLight = new
+        // ArrayList<>(CHUNKS_LIGHT_PER_TICK); //TODO remove in future releases
 
         for (int i = 0; i < CHUNKS_PER_TICK; i++) {
             ChunkToProcess next = chunksToProcess.poll();
@@ -119,12 +121,15 @@ public class DayTracker {
             batchToProcesses.add(next);
         }
 
-        for (int i = 0; i < CHUNKS_LIGHT_PER_TICK; i++) {
-            ChunkToProcess next = chunksToLightUpdate.poll();
-            if (next == null)
-                break;
-            batchToFixLight.add(next);
-        }
+        // TODO remove in future releases
+        /*
+         * for (int i = 0; i < CHUNKS_LIGHT_PER_TICK; i++) {
+         * ChunkToProcess next = chunksToLightUpdate.poll();
+         * if (next == null)
+         * break;
+         * batchToFixLight.add(next);
+         * }
+         */
 
         if (!batchToProcesses.isEmpty()) {
             // Randomize processing order to avoid visible sweeping lines
@@ -145,18 +150,21 @@ public class DayTracker {
             }
         }
 
-        if (!batchToFixLight.isEmpty()) {
-            for (ChunkToProcess task : batchToFixLight) {
-                ServerLevel lvl = task.getLevel();
-                if (lvl == null || !lvl.getServer().isSameThread()
-                        || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
-                    continue;
-                }
-                // fix the lights
-                LevelChunk chunk = lvl.getChunk(task.getChunkX(), task.getChunkZ());
-                LightFixer.forceLightUpdate(lvl, chunk);
-            }
-        }
+        //TODO remove in future releases
+        /*
+         * if (!batchToFixLight.isEmpty()) {
+         * for (ChunkToProcess task : batchToFixLight) {
+         * ServerLevel lvl = task.getLevel();
+         * if (lvl == null || !lvl.getServer().isSameThread()
+         * || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+         * continue;
+         * }
+         * // fix the lights
+         * // LevelChunk chunk = lvl.getChunk(task.getChunkX(), task.getChunkZ());
+         * // LightFixer.forceLightUpdate(lvl, chunk);
+         * }
+         * }
+         */
 
     }
 

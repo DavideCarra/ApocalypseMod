@@ -159,19 +159,18 @@ public class Generator {
                 return; // Already processed for this phase or later
             }
 
-            // ===== LOGGING CRITICO =====
             final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
-            // OPTIMIZATION: Preallocate list with realistic capacity
-            final List<BlockPos> changedPositions = new ArrayList<>(256);
+            boolean hadChanges = false;
 
             // PHASE 1: Water evaporation (if apocalypse is advanced enough)
             if (percent >= 40.0 || ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays) {
-                evaporateWater(chunk, level, ConfigManager.minWaterEvaporationHeight, level.getMaxBuildHeight());
+                hadChanges |= evaporateWater(chunk, level, ConfigManager.minWaterEvaporationHeight,
+                        level.getMaxBuildHeight());
             }
 
             // PHASE 2: Surface transformation (ash, fire)
-            transformSurface(chunk, level, percent, changedPositions);
+            hadChanges |= transformSurface(chunk, level, percent);
 
             if (currentPhaseNumber <= 5) {
                 // Update marker with current phase number
@@ -186,8 +185,8 @@ public class Generator {
             }
 
             // PHASE 3: Update clients only if there were changes
-            if (!changedPositions.isEmpty()) {
-                updateClientsAndScheduleTicks(chunk, level, changedPositions);
+            if (hadChanges) {
+                updateClients(chunk, level);
             }
 
         } catch (Exception e) {
@@ -200,13 +199,11 @@ public class Generator {
      * WATER EVAPORATION
      * Removes ALL water using direct section access
      */
-    private static void evaporateWater(LevelChunk chunk, ServerLevel level, int minBuildHeight, int maxBuildHeight) {
+    private static boolean evaporateWater(LevelChunk chunk, ServerLevel level, int minBuildHeight, int maxBuildHeight) {
         final BlockState airState = Blocks.AIR.defaultBlockState();
         final int chunkX = chunk.getPos().x;
         final int chunkZ = chunk.getPos().z;
-
-        // OPTIMIZATION: Preallocate list to avoid dynamic resizing
-        final List<BlockPos> changedPositions = new ArrayList<>(256);
+        boolean hadChanges = false;
 
         // Process current chunk + all 8 neighbors (3x3 grid = 9 chunks total)
         for (int offsetX = -1; offsetX <= 1; offsetX++) {
@@ -261,9 +258,19 @@ public class Generator {
                                     // Direct section modification
                                     section.setBlockState(lx, ly, lz, airState, false);
                                     dirtySection[secIndex] = true;
+                                    hadChanges = true;
 
-                                    // Save position for batch client update
-                                    changedPositions.add(new BlockPos(startX + lx, worldY, startZ + lz));
+                                    BlockPos pos = new BlockPos(startX + lx, worldY, startZ + lz);
+
+                                    // fix light under sea
+                                    if (worldY - 1 >= minBuildHeight) {
+                                        BlockPos below = pos.below();
+                                        BlockState belowState = targetChunk.getBlockState(below);
+                                        if (belowState.canOcclude() || belowState.isSolidRender(level, below)) {
+                                            level.setBlock(pos, Blocks.LIGHT.defaultBlockState(), Block.UPDATE_ALL);
+                                            level.scheduleTick(pos, Blocks.LIGHT, 10);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -278,20 +285,20 @@ public class Generator {
                 }
 
                 // Mark chunk as unsaved only if it has changes
-                if (!changedPositions.isEmpty()) {
+                if (hadChanges) {
                     targetChunk.setUnsaved(true);
                 }
-
             }
         }
+
+        return hadChanges;
     }
 
     /**
      * SURFACE TRANSFORMATION
      * Converts surface blocks to ash, fire, or air based on apocalypse progress
      */
-    private static void transformSurface(LevelChunk chunk, ServerLevel level, float percent,
-            List<BlockPos> changedPositions) {
+    private static boolean transformSurface(LevelChunk chunk, ServerLevel level, float percent) {
         final LevelChunkSection[] sections = chunk.getSections();
         final int startX = chunk.getPos().x << 4;
         final int startZ = chunk.getPos().z << 4;
@@ -301,7 +308,9 @@ public class Generator {
 
         // Cache block states to avoid repeated calls
         final BlockState ashState = ModBlocks.ASH_BLOCK.get().defaultBlockState();
+        final Block ashBlock = ModBlocks.ASH_BLOCK.get();
         final BlockState fireState = Blocks.FIRE.defaultBlockState();
+        final Block fireBlock = Blocks.FIRE;
         final BlockState airState = Blocks.AIR.defaultBlockState();
 
         // ThreadLocalRandom is faster for single-threaded operations
@@ -310,9 +319,7 @@ public class Generator {
 
         // Track which sections were modified
         final boolean[] dirtySection = new boolean[sectionsCount];
-
-        // Track columns that need lighting updates
-        final boolean[][] touchedColumn = new boolean[16][16];
+        boolean hadChanges = false;
 
         // Cache heightmap for fast surface access
         final Heightmap wsHM = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
@@ -340,6 +347,7 @@ public class Generator {
                 BlockState currentBlock = section.getBlockState(lx, ly, lz);
 
                 BlockState newState = ashState;
+                Block newBlock = ashBlock;
                 int targetY = topY;
 
                 // If current block is skippable (ash/air), find first solid block below
@@ -368,10 +376,13 @@ public class Generator {
                             // Determine transformation type
                             if (Analyzer.canBurn(foundBlock, null, null)) {
                                 newState = fireState;
+                                newBlock = fireBlock;
                             } else if (Analyzer.isEvaporable(foundBlock)) {
                                 newState = airState;
+                                newBlock = null;
                             } else {
                                 newState = ashState;
+                                newBlock = ashBlock;
                             }
                             break;
                         }
@@ -384,10 +395,13 @@ public class Generator {
                     // Current block is solid, transform it directly
                     if (Analyzer.canBurn(currentBlock, null, null)) {
                         newState = fireState;
+                        newBlock = fireBlock;
                     } else if (Analyzer.isEvaporable(currentBlock)) {
                         newState = airState;
+                        newBlock = null;
                     } else {
                         newState = ashState;
+                        newBlock = ashBlock;
                     }
                 }
 
@@ -397,10 +411,41 @@ public class Generator {
                     LevelChunkSection targetSection = sections[finalSecIndex];
                     if (targetSection != null) {
                         int finalLy = targetY & 15;
+
+                        // Save old state BEFORE changing it
+                        BlockState oldState = targetSection.getBlockState(lx, finalLy, lz);
+
                         targetSection.setBlockState(lx, finalLy, lz, newState, false);
                         dirtySection[finalSecIndex] = true;
-                        changedPositions.add(new BlockPos(startX + lx, targetY, startZ + lz));
-                        touchedColumn[lx][lz] = true;
+                        hadChanges = true;
+
+                        BlockPos pos = new BlockPos(startX + lx, targetY, startZ + lz);
+
+                        // Schedule ticks inline
+                        if (newBlock == ashBlock) {
+                            level.scheduleTick(pos, ashBlock, 1);
+                        } else if (newBlock == fireBlock) {
+                            level.scheduleTick(pos, fireBlock, 1);
+                        } else if (newBlock == null && Analyzer.isEvaporable(oldState)) {
+                            // Schedule tick for adjacent water blocks to recalculate flow
+                            BlockPos[] neighbors = {
+                                    pos.north(), pos.south(), pos.east(), pos.west(), pos.above(), pos.below()
+                            };
+
+                            for (BlockPos neighbor : neighbors) {
+                                BlockState neighborState = level.getBlockState(neighbor);
+                                if (neighborState.getFluidState().getType() == Fluids.WATER) {
+                                    level.scheduleTick(neighbor, Fluids.WATER, Fluids.WATER.getTickDelay(level));
+                                }
+                            }
+                        }
+                        // Handle falling blocks
+                        if (newState.getBlock() instanceof FallingBlock) {
+                            BlockPos belowPos = pos.below();
+                            if (FallingBlock.isFree(level.getBlockState(belowPos))) {
+                                FallingBlockEntity.fall(level, pos, newState);
+                            }
+                        }
                     }
                 }
             }
@@ -414,49 +459,19 @@ public class Generator {
         }
 
         // Update heightmaps if there were changes
-        if (!changedPositions.isEmpty()) {
+        if (hadChanges) {
             chunk.setUnsaved(true);
             Heightmap.primeHeightmaps(chunk, chunk.getStatus().heightmapsAfter());
         }
+
+        return hadChanges;
     }
 
     /**
-     * * UPDATE CLIENTS AND SCHEDULE TICKS * Sends chunk updates to clients and
-     * schedules block ticks for dynamic blocks
+     * UPDATE CLIENTS
+     * Sends chunk update to clients
      */
-    private static void updateClientsAndScheduleTicks(LevelChunk chunk, ServerLevel level,
-            List<BlockPos> changedPositions) {
-        final Block ashBlock = ModBlocks.ASH_BLOCK.get();
-        final Block fireBlock = Blocks.FIRE;
-        final BlockState airState = Blocks.AIR.defaultBlockState();
-        final int tickDelay = 1;
-        final boolean[][] touchedColumn = new boolean[16][16]; // Schedule ticks for dynamic blocks (ash, fire, falling
-                                                               // blocks)
-        for (BlockPos pos : changedPositions) {
-            BlockState state = level.getBlockState(pos); // Schedule tick for ash blocks
-            if (state.getBlock() == ashBlock) {
-                // Schedule tick for fire blocks
-                level.scheduleTick(pos, ashBlock, tickDelay);
-            }
-            if (state.getBlock() == fireBlock) {
-                // Handle falling blocks (sand, gravel, etc.)
-                level.scheduleTick(pos, fireBlock, tickDelay);
-            } // Schedule tick for water
-            if (Analyzer.isEvaporable(state)) {
-                level.sendBlockUpdated(pos, state, airState, 3);
-                level.scheduleTick(pos, Fluids.WATER, 1);
-            }
-            if (state.getBlock() instanceof FallingBlock) {
-                BlockPos belowPos = pos.below();
-                if (FallingBlock.isFree(level.getBlockState(belowPos))) {
-                    FallingBlockEntity.fall(level, pos, state);
-                }
-            } // Mark column for lighting update
-            int lx = Math.floorMod(pos.getX(), 16);
-            int lz = Math.floorMod(pos.getZ(), 16);
-            touchedColumn[lx][lz] = true;
-        }
-
+    private static void updateClients(LevelChunk chunk, ServerLevel level) {
         final ChunkPos chunkPos = chunk.getPos();
 
         // Refresh entire chunk for client updates
@@ -477,7 +492,6 @@ public class Generator {
                 });
             }
         }
-
     }
 
     /**

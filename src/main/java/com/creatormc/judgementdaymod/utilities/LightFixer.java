@@ -18,6 +18,7 @@ public class LightFixer {
      * Forces a lighting update for all columns in a chunk by placing temporary
      * light blocks.
      */
+    //TODO remove in future releases
     public static void forceLightUpdate(ServerLevel level, LevelChunk chunk) {
         if (Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays) <= 0)
             return;
