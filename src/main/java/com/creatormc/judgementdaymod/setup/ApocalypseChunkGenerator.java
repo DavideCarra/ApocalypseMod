@@ -122,6 +122,15 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
 
         // vanilla surface
         before.buildSurface(region, sm, rs, chunk);
+        // Marker at the chunk's SW corner, below world
+        int minY = region.getMinBuildHeight() + 1;
+        BlockPos markerPos = new BlockPos(chunk.getPos().x * 16, minY, chunk.getPos().z * 16);
+        chunk.setBlockState(markerPos, ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState(), false);
+
+        // Skip if apocalypse is not active since terrain will turn to ash later anyway
+        if (!ConfigManager.apocalypseActive) {
+            return;
+        }
 
         final int chunkX = chunk.getPos().x;
         final int chunkZ = chunk.getPos().z;
@@ -135,17 +144,11 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
 
-                // Skip if apocalypse is not active since terrain will turn to ash later anyway
-                if (!ConfigManager.apocalypseActive && random.nextFloat() > (ConfigManager.apocalypseCurrentDay * 0.01f)) {
-                    continue;
-                }
-
                 int y = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, lx, lz);
 
                 posSurface.set(startX + lx, y, startZ + lz);
                 posUnder1Block.set(startX + lx, y - 1, startZ + lz);
                 posUnder2Blocks.set(startX + lx, y - 2, startZ + lz);
-                
 
                 final BlockState cur1 = chunk.getBlockState(posSurface);
                 final BlockState cur2 = chunk.getBlockState(posUnder1Block);

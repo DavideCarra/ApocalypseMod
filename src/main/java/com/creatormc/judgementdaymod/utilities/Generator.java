@@ -3,6 +3,7 @@ package com.creatormc.judgementdaymod.utilities;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.creatormc.judgementdaymod.events.mixin.ChunkMapAccessor;
 import com.creatormc.judgementdaymod.handlers.DayTracker;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
@@ -18,6 +19,8 @@ import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ChunkHolder;
+import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
@@ -126,12 +129,6 @@ public class Generator {
 
     @SuppressWarnings("resource")
     public static void processChunk(ChunkToProcess chunkInfo) {
-        // If apocalypse is over, do not process any more chunks
-        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay
-                || ConfigManager.apocalypseCurrentDay < 0) {
-            return;
-        }
-
         try {
             final ServerLevel level = chunkInfo.getLevel();
             final int chunkX = chunkInfo.getChunkX();
@@ -143,6 +140,31 @@ public class Generator {
             }
 
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
+
+            // Marker at the chunk's SW corner, below world
+            int minY = level.getMinBuildHeight() +1;
+            BlockPos markerPos = new BlockPos(chunk.getPos().x * 16, minY, chunk.getPos().z * 16);
+
+            // DURING apocalypse → gate processing behind the marker
+            boolean hasMarker = level.getBlockState(markerPos).is(ModBlocks.APOCALYPSE_MARKER.get());
+
+            // OUTSIDE apocalypse window → remove marker (if present) and bail out
+            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay
+                    || ConfigManager.apocalypseCurrentDay < 0) {
+                // Remove marker if present
+                if (!hasMarker) {
+                    return; // Do not place marker while this condition is true
+                } else {
+                    level.setBlock(markerPos, Blocks.AIR.defaultBlockState(), 3);
+                }
+            }
+
+            // If the marker is NOT placed yet, place it now and process chunk
+            if (!hasMarker) {
+                level.setBlock(markerPos, ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState(), 3);
+            }
+
+            // ===== LOGGING CRITICO =====
             final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
             // OPTIMIZATION: Preallocate list with realistic capacity
@@ -451,7 +473,7 @@ public class Generator {
     }
 
     /**
-     * Reset all chunks in player's view distance
+     * Reset all chunks already watched
      * Used when entering a new apocalypse phase
      */
     public static void resetPlayerChunks(ServerPlayer player) {
@@ -459,21 +481,18 @@ public class Generator {
             return;
 
         ServerLevel level = player.serverLevel();
-        ChunkPos playerPos = new ChunkPos(player.blockPosition());
-        int viewDistance = level.getServer().getPlayerList().getViewDistance() + 1;
+        ChunkMap chunkMap = level.getChunkSource().chunkMap;
+        ChunkMapAccessor accessor = (ChunkMapAccessor) chunkMap;
+        Iterable<ChunkHolder> chunkHolders = accessor.invokeGetChunks();
 
-        // Queue all visible chunks for reprocessing
-        for (int dx = -viewDistance; dx <= viewDistance; dx++) {
-            for (int dz = -viewDistance; dz <= viewDistance; dz++) {
-                int cx = playerPos.x + dx;
-                int cz = playerPos.z + dz;
-                LevelChunk chunk = level.getChunk(cx, cz);
-                if (chunk != null) {
-                    ChunkToProcess task = new ChunkToProcess(level, cx, cz);
-                    DayTracker.enqueueChunk(task);
-                    DayTracker.enqueueLightUpdateChunk(task);
-                }
-            }
+        for (ChunkHolder holder : chunkHolders) {
+            if (holder == null)
+                continue;
+
+            ChunkPos pos = holder.getPos();
+            ChunkToProcess task = new ChunkToProcess(level, pos.x, pos.z);
+            DayTracker.enqueueChunk(task);
+
         }
     }
 
