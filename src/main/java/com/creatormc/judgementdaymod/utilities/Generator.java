@@ -142,7 +142,7 @@ public class Generator {
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
 
             // Marker at the chunk's SW corner, below world
-            int minY = level.getMinBuildHeight() +1;
+            int minY = level.getMinBuildHeight() + 1;
             BlockPos markerPos = new BlockPos(chunk.getPos().x * 16, minY, chunk.getPos().z * 16);
 
             // DURING apocalypse → gate processing behind the marker
@@ -481,18 +481,21 @@ public class Generator {
             return;
 
         ServerLevel level = player.serverLevel();
-        ChunkMap chunkMap = level.getChunkSource().chunkMap;
-        ChunkMapAccessor accessor = (ChunkMapAccessor) chunkMap;
-        Iterable<ChunkHolder> chunkHolders = accessor.invokeGetChunks();
+        ChunkPos playerPos = new ChunkPos(player.blockPosition());
+        int viewDistance = level.getServer().getPlayerList().getViewDistance() + 1;
 
-        for (ChunkHolder holder : chunkHolders) {
-            if (holder == null)
-                continue;
-
-            ChunkPos pos = holder.getPos();
-            ChunkToProcess task = new ChunkToProcess(level, pos.x, pos.z);
-            DayTracker.enqueueChunk(task);
-
+        // Queue all visible chunks for reprocessing
+        for (int dx = -viewDistance; dx <= viewDistance; dx++) {
+            for (int dz = -viewDistance; dz <= viewDistance; dz++) {
+                int cx = playerPos.x + dx;
+                int cz = playerPos.z + dz;
+                LevelChunk chunk = level.getChunk(cx, cz);
+                if (chunk != null) {
+                    ChunkToProcess task = new ChunkToProcess(level, cx, cz);
+                    DayTracker.enqueueChunk(task);
+                    DayTracker.enqueueLightUpdateChunk(task);
+                }
+            }
         }
     }
 

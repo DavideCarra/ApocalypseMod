@@ -2,6 +2,7 @@ package com.creatormc.judgementdaymod.events.mixin;
 
 import com.creatormc.judgementdaymod.setup.ApocalypseChunkGenerator;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
+import com.creatormc.judgementdaymod.utilities.ConfigManager;
 
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -47,6 +48,12 @@ public class ServerLevelMixin {
             return;
 
         try {
+
+            // Reload config
+            ConfigManager.load(); 
+            JudgementDayMod.LOGGER
+                    .info("[JudgementDayMixin] Config reloaded: apocalypseActive = " + ConfigManager.apocalypseActive);
+
             JudgementDayMod.LOGGER
                     .info("[JudgementDayMixin] Attempting to install ApocalypseChunkGenerator for Overworld...");
 
