@@ -3,7 +3,6 @@ package com.creatormc.judgementdaymod.utilities;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.creatormc.judgementdaymod.events.mixin.ChunkMapAccessor;
 import com.creatormc.judgementdaymod.handlers.DayTracker;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
@@ -19,8 +18,6 @@ import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ChunkHolder;
-import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;

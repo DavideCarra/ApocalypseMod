@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
@@ -189,6 +190,19 @@ public class ApocalypseDamageHandler {
 
         // Send reset packet to client (if player)
         if (entity instanceof ServerPlayer serverPlayer) {
+            NetworkHandler.sendToClient(new HeatSyncPacket(0f), serverPlayer);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
+        if (event.getEntity() instanceof ServerPlayer serverPlayer) {
+            UUID id = serverPlayer.getUUID();
+
+            // Force reset heat on respawn
+            heatLevels.put(id, 0f);
+
+            // Send reset packet
             NetworkHandler.sendToClient(new HeatSyncPacket(0f), serverPlayer);
         }
     }
