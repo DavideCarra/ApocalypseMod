@@ -1,5 +1,6 @@
 package com.creatormc.judgementdaymod.setup;
 
+import com.creatormc.judgementdaymod.elements.ApocalypseMarkerBlock;
 import com.creatormc.judgementdaymod.utilities.ApocalypseManager;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.mojang.serialization.Codec;
@@ -50,7 +51,8 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
 
     // ==== Safe delegations to vanilla ====
     @Override
-    public CompletableFuture<ChunkAccess> fillFromNoise(@Nonnull Executor ex, @Nonnull Blender blender, @Nonnull RandomState rs,
+    public CompletableFuture<ChunkAccess> fillFromNoise(@Nonnull Executor ex, @Nonnull Blender blender,
+            @Nonnull RandomState rs,
             @Nonnull StructureManager sm, @Nonnull ChunkAccess chunk) {
         if (!ApocalypseManager.isApocalypseActive()) {
             return before.fillFromNoise(ex, blender, rs, sm, chunk);
@@ -74,7 +76,8 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
     }
 
     @Override
-    public void applyCarvers(@Nonnull WorldGenRegion level, long seed, @Nonnull RandomState rs, @Nonnull BiomeManager bm,
+    public void applyCarvers(@Nonnull WorldGenRegion level, long seed, @Nonnull RandomState rs,
+            @Nonnull BiomeManager bm,
             @Nonnull StructureManager sm, @Nonnull ChunkAccess chunk, @Nonnull Carving step) {
         before.applyCarvers(level, seed, rs, bm, sm, chunk, step);
     }
@@ -100,7 +103,8 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
     }
 
     @Override
-    public int getBaseHeight(int x, int z, @Nonnull Heightmap.Types type, @Nonnull LevelHeightAccessor acc, @Nonnull RandomState rs) {
+    public int getBaseHeight(int x, int z, @Nonnull Heightmap.Types type, @Nonnull LevelHeightAccessor acc,
+            @Nonnull RandomState rs) {
         return before.getBaseHeight(x, z, type, acc, rs);
     }
 
@@ -117,14 +121,19 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
 
     // ==== Surface replacement only when apocalypse is ON ====
     @Override
-    public void buildSurface(@Nonnull WorldGenRegion region, @Nonnull StructureManager sm, @Nonnull RandomState rs, @Nonnull ChunkAccess chunk) {
+    public void buildSurface(@Nonnull WorldGenRegion region, @Nonnull StructureManager sm, @Nonnull RandomState rs,
+            @Nonnull ChunkAccess chunk) {
 
         // vanilla surface
         before.buildSurface(region, sm, rs, chunk);
         // Marker at the chunk's SW corner, below world
         int minY = region.getMinBuildHeight() + 1;
         BlockPos markerPos = new BlockPos(chunk.getPos().x * 16, minY, chunk.getPos().z * 16);
-        chunk.setBlockState(markerPos, ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState(), false);
+
+        // Set marker with phase 0 (initial phase)
+        BlockState markerState = ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState()
+                .setValue(ApocalypseMarkerBlock.PHASE, 0);
+        chunk.setBlockState(markerPos, markerState, false);
 
         // Skip if apocalypse is not active since terrain will turn to ash later anyway
         if (!ConfigManager.apocalypseActive) {
@@ -165,7 +174,8 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
     }
 
     @Override
-    public void applyBiomeDecoration(@Nonnull WorldGenLevel wLevel, @Nonnull ChunkAccess chunk, @Nonnull StructureManager sm) {
+    public void applyBiomeDecoration(@Nonnull WorldGenLevel wLevel, @Nonnull ChunkAccess chunk,
+            @Nonnull StructureManager sm) {
         if (!ApocalypseManager.isApocalypseActive()) {
             before.applyBiomeDecoration(wLevel, chunk, sm);
         } else {

@@ -3,6 +3,7 @@ package com.creatormc.judgementdaymod.utilities;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.creatormc.judgementdaymod.elements.ApocalypseMarkerBlock;
 import com.creatormc.judgementdaymod.handlers.DayTracker;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
@@ -142,23 +143,20 @@ public class Generator {
             int minY = level.getMinBuildHeight() + 1;
             BlockPos markerPos = new BlockPos(chunk.getPos().x * 16, minY, chunk.getPos().z * 16);
 
-            // DURING apocalypse → gate processing behind the marker
+            // Calculate current phase number (0-4)
+            int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay,
+                    ConfigManager.apocalypseMaxDays / 5);
+
             boolean hasMarker = level.getBlockState(markerPos).is(ModBlocks.APOCALYPSE_MARKER.get());
 
-            // OUTSIDE apocalypse window → remove marker (if present) and bail out
-            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay
-                    || ConfigManager.apocalypseCurrentDay < 0) {
-                // Remove marker if present
-                if (!hasMarker) {
-                    return; // Do not place marker while this condition is true
-                } else {
-                    level.setBlock(markerPos, Blocks.AIR.defaultBlockState(), 3);
-                }
+            if (!hasMarker) {
+                return;
             }
 
-            // If the marker is NOT placed yet, place it now and process chunk
-            if (!hasMarker) {
-                level.setBlock(markerPos, ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState(), 3);
+            BlockState existingMarker = level.getBlockState(markerPos);
+            int savedPhase = existingMarker.getValue(ApocalypseMarkerBlock.PHASE);
+            if (savedPhase >= currentPhaseNumber) {
+                return; // Already processed for this phase or later
             }
 
             // ===== LOGGING CRITICO =====
@@ -174,6 +172,18 @@ public class Generator {
 
             // PHASE 2: Surface transformation (ash, fire)
             transformSurface(chunk, level, percent, changedPositions);
+
+            if (currentPhaseNumber <= 5) {
+                // Update marker with current phase number
+                BlockState newMarker = ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState()
+                        .setValue(ApocalypseMarkerBlock.PHASE, currentPhaseNumber);
+                level.setBlock(markerPos, newMarker, 3);
+            }
+
+            // remove marker if apocalypse ended
+            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+                level.setBlock(markerPos, Blocks.AIR.defaultBlockState(), 3);
+            }
 
             // PHASE 3: Update clients only if there were changes
             if (!changedPositions.isEmpty()) {
@@ -271,6 +281,7 @@ public class Generator {
                 if (!changedPositions.isEmpty()) {
                     targetChunk.setUnsaved(true);
                 }
+
             }
         }
     }
