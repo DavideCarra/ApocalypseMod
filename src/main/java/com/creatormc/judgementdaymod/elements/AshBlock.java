@@ -1,18 +1,11 @@
 package com.creatormc.judgementdaymod.elements;
 
-import com.creatormc.judgementdaymod.utilities.Analyzer;
+import javax.annotation.Nonnull;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.server.level.ServerLevel;
-import net.minecraft.util.RandomSource;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.FallingBlockEntity;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.SoundType;
@@ -36,18 +29,18 @@ public class AshBlock extends FallingBlock {
     }
 
     @Override
-    public int getDustColor(BlockState state, BlockGetter reader, BlockPos pos) {
+    public int getDustColor(@Nonnull BlockState state, @Nonnull BlockGetter reader, @Nonnull BlockPos pos) {
         return 0x6B6B6B; // Dark gray for ash
     }
 
     @Override
-    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+    protected void createBlockStateDefinition(@Nonnull StateDefinition.Builder<Block, BlockState> builder) {
         builder.add(SPREADS_LEFT);
     }
 
     // Optional: makes ash fall more slowly
     @Override
-    protected void falling(FallingBlockEntity fallingEntity) {
+    protected void falling(@Nonnull FallingBlockEntity fallingEntity) {
         fallingEntity.setDeltaMovement(
                 fallingEntity.getDeltaMovement().multiply(1.0, 0.8, 1.0));
     }

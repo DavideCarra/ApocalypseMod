@@ -24,7 +24,6 @@ import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.Analyzer;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
-import com.creatormc.judgementdaymod.utilities.LightFixer;
 
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class DayTracker {

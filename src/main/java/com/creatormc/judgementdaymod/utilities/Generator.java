@@ -1,7 +1,9 @@
 package com.creatormc.judgementdaymod.utilities;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import com.creatormc.judgementdaymod.elements.ApocalypseMarkerBlock;
 import com.creatormc.judgementdaymod.handlers.DayTracker;
@@ -267,8 +269,20 @@ public class Generator {
                                         BlockPos below = pos.below();
                                         BlockState belowState = targetChunk.getBlockState(below);
                                         if (belowState.canOcclude() || belowState.isSolidRender(level, below)) {
-                                            level.setBlock(pos, Blocks.LIGHT.defaultBlockState(), Block.UPDATE_ALL);
-                                            level.scheduleTick(pos, Blocks.LIGHT, 10);
+                                            int lightY = worldY;
+                                            int lightSecIndex = (lightY >> 4) - minSection;
+                                            if (lightSecIndex >= 0 && lightSecIndex < sections.length) {
+                                                LevelChunkSection lightSection = sections[lightSecIndex];
+                                                if (lightSection != null) {
+                                                    int lightLy = lightY & 15;
+                                                    lightSection.setBlockState(lx, lightLy, lz,
+                                                            Blocks.LIGHT.defaultBlockState(), false);
+
+                                                    // Force light update
+                                                    level.getChunkSource().getLightEngine().checkBlock(pos);
+                                                    level.scheduleTick(pos, Blocks.LIGHT, 10);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -305,6 +319,7 @@ public class Generator {
         final int minSection = chunk.getMinSection();
         final int minBuildHeight = ConfigManager.minWaterEvaporationHeight;
         final int sectionsCount = sections.length;
+        Set<BlockPos> waterNeighborsToUpdate = new HashSet<>();
 
         // Cache block states to avoid repeated calls
         final BlockState ashState = ModBlocks.ASH_BLOCK.get().defaultBlockState();
@@ -427,17 +442,13 @@ public class Generator {
                         } else if (newBlock == fireBlock) {
                             level.scheduleTick(pos, fireBlock, 1);
                         } else if (newBlock == null && Analyzer.isEvaporable(oldState)) {
-                            // Schedule tick for adjacent water blocks to recalculate flow
-                            BlockPos[] neighbors = {
-                                    pos.north(), pos.south(), pos.east(), pos.west(), pos.above(), pos.below()
-                            };
-
-                            for (BlockPos neighbor : neighbors) {
-                                BlockState neighborState = level.getBlockState(neighbor);
-                                if (neighborState.getFluidState().getType() == Fluids.WATER) {
-                                    level.scheduleTick(neighbor, Fluids.WATER, Fluids.WATER.getTickDelay(level));
-                                }
-                            }
+                            // Add neighbors to set instead of immediate check
+                            waterNeighborsToUpdate.add(pos.north());
+                            waterNeighborsToUpdate.add(pos.south());
+                            waterNeighborsToUpdate.add(pos.east());
+                            waterNeighborsToUpdate.add(pos.west());
+                            waterNeighborsToUpdate.add(pos.above());
+                            waterNeighborsToUpdate.add(pos.below());
                         }
                         // Handle falling blocks
                         if (newState.getBlock() instanceof FallingBlock) {
@@ -448,6 +459,14 @@ public class Generator {
                         }
                     }
                 }
+            }
+        }
+
+        // update neighbors
+        for (BlockPos neighbor : waterNeighborsToUpdate) {
+            BlockState state = level.getBlockState(neighbor);
+            if (state.getFluidState().getType() == Fluids.WATER) {
+                level.scheduleTick(neighbor, Fluids.WATER, Fluids.WATER.getTickDelay(level));
             }
         }
 

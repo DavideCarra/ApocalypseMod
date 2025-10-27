@@ -18,7 +18,5 @@ public class ModBlocks {
         public static final RegistryObject<Block> APOCALYPSE_MARKER = BLOCKS.register("apocalypse_marker",
                         () -> new ApocalypseMarkerBlock(BlockBehaviour.Properties.of()
                                         .noLootTable()
-                                        .noOcclusion()
-                                        .strength(-1.0F, 3600000.0F)
-                                        .noCollission()));
+                                        .strength(-1.0F, 3600000.0F)));
 }
