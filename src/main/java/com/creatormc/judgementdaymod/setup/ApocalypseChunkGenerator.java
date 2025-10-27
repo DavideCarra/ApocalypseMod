@@ -1,6 +1,7 @@
 package com.creatormc.judgementdaymod.setup;
 
 import com.creatormc.judgementdaymod.elements.ApocalypseMarkerBlock;
+import com.creatormc.judgementdaymod.utilities.ApocalypseChunkData;
 import com.creatormc.judgementdaymod.utilities.ApocalypseManager;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.mojang.serialization.Codec;
@@ -126,14 +127,10 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
 
         // vanilla surface
         before.buildSurface(region, sm, rs, chunk);
-        // Marker at the chunk's SW corner, below world
-        int minY = region.getMinBuildHeight() + 1;
-        BlockPos markerPos = new BlockPos(chunk.getPos().x * 16, minY, chunk.getPos().z * 16);
-
-        // Set marker with phase 0 (initial phase)
-        BlockState markerState = ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState()
-                .setValue(ApocalypseMarkerBlock.PHASE, 0);
-        chunk.setBlockState(markerPos, markerState, false);
+        
+        // Register this chunk in the persistent apocalypse data
+        ApocalypseChunkData data = ApocalypseChunkData.get(region.getLevel());
+        data.setPhase(chunk.getPos(), 0); // Initial phase (unaffected)
 
         // Skip if apocalypse is not active since terrain will turn to ash later anyway
         if (!ConfigManager.apocalypseActive) {
