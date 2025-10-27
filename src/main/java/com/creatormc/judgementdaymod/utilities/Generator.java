@@ -141,24 +141,19 @@ public class Generator {
 
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
 
-            // Marker at the chunk's SW corner, below world
-            int minY = level.getMinBuildHeight() + 1;
-            BlockPos markerPos = new BlockPos(chunk.getPos().x * 16, minY, chunk.getPos().z * 16);
-
             // Calculate current phase number (0-4)
             int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay,
                     ConfigManager.apocalypseMaxDays / 5);
 
-            boolean hasMarker = level.getBlockState(markerPos).is(ModBlocks.APOCALYPSE_MARKER.get());
+            // Retrieve persistent chunk data (stored in
+            // world/data/judgementday_chunkdata.dat)
+            ApocalypseChunkData data = ApocalypseChunkData.get(level);
+            ChunkPos chunkPos = chunk.getPos();
+            int savedPhase = data.getPhase(chunkPos);
 
-            if (!hasMarker) {
+            // Skip processing if this chunk was already processed for this or a later phase
+            if (currentPhaseNumber <= savedPhase) {
                 return;
-            }
-
-            BlockState existingMarker = level.getBlockState(markerPos);
-            int savedPhase = existingMarker.getValue(ApocalypseMarkerBlock.PHASE);
-            if (savedPhase >= currentPhaseNumber) {
-                return; // Already processed for this phase or later
             }
 
             final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
@@ -174,18 +169,16 @@ public class Generator {
             // PHASE 2: Surface transformation (ash, fire)
             hadChanges |= transformSurface(chunk, level, percent);
 
+            // Update the stored phase value for this chunk
             if (currentPhaseNumber <= 5) {
-                // Update marker with current phase number
-                BlockState newMarker = ModBlocks.APOCALYPSE_MARKER.get().defaultBlockState()
-                        .setValue(ApocalypseMarkerBlock.PHASE, currentPhaseNumber);
-                level.setBlock(markerPos, newMarker, 3);
+                data.setPhase(chunkPos, currentPhaseNumber);
             }
 
-            // remove marker if apocalypse ended
+            // If the apocalypse has ended, remove this chunk’s record
             if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
-                level.setBlock(markerPos, Blocks.AIR.defaultBlockState(), 3);
+                data.setPhase(chunkPos, -1);
             }
-
+            
             // PHASE 3: Update clients only if there were changes
             if (hadChanges) {
                 updateClients(chunk, level);
