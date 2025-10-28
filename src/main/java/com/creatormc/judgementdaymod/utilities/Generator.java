@@ -207,7 +207,7 @@ public class Generator {
         boolean hadChanges = false;
 
         // Predicate for water detection
-        final Predicate<BlockState> isWater = state -> state.is(Blocks.WATER);
+        final Predicate<BlockState> isEvaporable = state -> Analyzer.isEvaporable(state);
 
         // Process 3x3 chunk grid (current chunk + 8 neighbors)
         for (int offsetX = -1; offsetX <= 1; offsetX++) {
@@ -236,7 +236,7 @@ public class Generator {
                         continue;
 
                     // Fast check: does this section contain water?
-                    if (section.maybeHas(isWater)) {
+                    if (section.maybeHas(isEvaporable)) {
                         sectionsWithWater.add(secIndex);
                     }
                 }
@@ -282,13 +282,10 @@ public class Generator {
 
                                 mutablePos.set(startX + lx, worldY, startZ + lz);
 
-                                // Use immutable to prevent leaks
-                                BlockPos pos = mutablePos.immutable();
-
                                 // Local coordinates (0–15) within the section
-                                int localX = pos.getX() & 15;
+                                int localX = mutablePos.getX() & 15;
                                 int localY = worldY & 15;
-                                int localZ = pos.getZ() & 15;
+                                int localZ = mutablePos.getZ() & 15;
 
                                 // Previous block state
                                 BlockState oldState = section.setBlockState(localX, localY, localZ, airState);
@@ -298,13 +295,13 @@ public class Generator {
                                 }
 
                                 // Light management
-                                if (LightEngine.hasDifferentLightProperties(targetChunk, pos, oldState,
+                                if (LightEngine.hasDifferentLightProperties(targetChunk, mutablePos, oldState,
                                         airState)) {
                                     ProfilerFiller profiler = level.getProfiler();
                                     profiler.push("updateSkyLightSources");
                                     targetChunk.getSkyLightSources().update(targetChunk, localX, worldY, localZ);
                                     profiler.popPush("queueCheckLight");
-                                    level.getChunkSource().getLightEngine().checkBlock(pos);
+                                    level.getChunkSource().getLightEngine().checkBlock(mutablePos);
                                     profiler.pop();
                                 }
 
