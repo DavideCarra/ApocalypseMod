@@ -4,8 +4,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 
-import com.creatormc.judgementdaymod.elements.ApocalypseMarkerBlock;
 import com.creatormc.judgementdaymod.handlers.DayTracker;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
@@ -33,9 +33,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.FallingBlock;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -208,6 +206,9 @@ public class Generator {
         final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         boolean hadChanges = false;
 
+        // Predicate for water detection
+        final Predicate<BlockState> isWater = state -> state.is(Blocks.WATER);
+
         // Process 3x3 chunk grid (current chunk + 8 neighbors)
         for (int offsetX = -1; offsetX <= 1; offsetX++) {
             for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
@@ -227,8 +228,25 @@ public class Generator {
                 final int minSecIndex = Math.max(0, (minBuildHeight >> 4) - minSection);
                 final int maxSecIndex = Math.min(sections.length - 1, (maxBuildHeight >> 4) - minSection);
 
-                // Iterate through sections from top to bottom
+                List<Integer> sectionsWithWater = new ArrayList<>();
                 for (int secIndex = maxSecIndex; secIndex >= minSecIndex; secIndex--) {
+                    final LevelChunkSection section = sections[secIndex];
+
+                    if (section == null || section.hasOnlyAir())
+                        continue;
+
+                    // Fast check: does this section contain water?
+                    if (section.maybeHas(isWater)) {
+                        sectionsWithWater.add(secIndex);
+                    }
+                }
+
+                // If no section has water, skip this chunk entirely
+                if (sectionsWithWater.isEmpty())
+                    continue;
+
+                // Iterate ONLY over sections that contain water
+                for (int secIndex : sectionsWithWater) {
                     final LevelChunkSection section = sections[secIndex];
 
                     if (section == null || section.hasOnlyAir())
