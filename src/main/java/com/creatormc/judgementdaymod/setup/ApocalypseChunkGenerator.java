@@ -1,6 +1,5 @@
 package com.creatormc.judgementdaymod.setup;
 
-import com.creatormc.judgementdaymod.elements.ApocalypseMarkerBlock;
 import com.creatormc.judgementdaymod.utilities.ApocalypseChunkData;
 import com.creatormc.judgementdaymod.utilities.ApocalypseManager;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
