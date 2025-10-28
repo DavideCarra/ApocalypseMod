@@ -112,9 +112,6 @@ public class Analyzer {
                 || blockState.is(Blocks.SNOW)
                 || blockState.is(Blocks.SNOW_BLOCK)
                 || blockState.is(Blocks.BARRIER)
-                || blockState.is(Blocks.CAVE_AIR)
-                || blockState.is(Blocks.VOID_AIR)
-                || blockState.is(Blocks.AIR)
                 || blockState.is(Blocks.LILY_PAD)
                 || blockState.getBlock() instanceof LightBlock) {
             return true;

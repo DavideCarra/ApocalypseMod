@@ -26,17 +26,21 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.lighting.LightEngine;
 import net.minecraft.world.level.material.Fluids;
 
 public class Generator {
@@ -134,7 +138,6 @@ public class Generator {
             final int chunkX = chunkInfo.getChunkX();
             final int chunkZ = chunkInfo.getChunkZ();
 
-            // Early returns for safety
             if (!level.getServer().isSameThread() || !level.hasChunk(chunkX, chunkZ)) {
                 return;
             }
@@ -145,13 +148,17 @@ public class Generator {
             int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay,
                     ConfigManager.apocalypseMaxDays / 5);
 
-            // Retrieve persistent chunk data (stored in
-            // world/data/judgementday_chunkdata.dat)
             ApocalypseChunkData data = ApocalypseChunkData.get(level);
             ChunkPos chunkPos = chunk.getPos();
             int savedPhase = data.getPhase(chunkPos);
 
-            // Skip processing if this chunk was already processed for this or a later phase
+            // If apocalypse has ended, skip ALL processing
+            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay && savedPhase == 999) {
+                // Mark as permanently completed (use a special value like 999)
+                return;
+            }
+
+            // Skip if already processed for this phase or later
             if (currentPhaseNumber <= savedPhase) {
                 return;
             }
@@ -160,26 +167,24 @@ public class Generator {
 
             boolean hadChanges = false;
 
-            // PHASE 1: Water evaporation (if apocalypse is advanced enough)
+            // PHASE 1: Water evaporation
             if (percent >= 40.0 || ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays) {
                 hadChanges |= evaporateWater(chunk, level, ConfigManager.minWaterEvaporationHeight,
                         level.getMaxBuildHeight());
             }
 
-            // PHASE 2: Surface transformation (ash, fire)
+            // PHASE 2: Surface transformation
             hadChanges |= transformSurface(chunk, level, percent);
 
-            // Update the stored phase value for this chunk
-            if (currentPhaseNumber <= 5) {
-                data.setPhase(chunkPos, currentPhaseNumber);
+            // Set phase to 999, to stop processing
+            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+                data.setPhase(chunkPos, 999);
+            } else {
+                // Update phase (0-4 are valid phases, 5+ means "max apocalypse reached")
+                data.setPhase(chunkPos, Math.min(currentPhaseNumber, 5));
             }
 
-            // If the apocalypse has ended, remove this chunk’s record
-            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
-                data.setPhase(chunkPos, -1);
-            }
-            
-            // PHASE 3: Update clients only if there were changes
+            // PHASE 3: Update clients
             if (hadChanges) {
                 updateClients(chunk, level);
             }
@@ -192,15 +197,18 @@ public class Generator {
 
     /**
      * WATER EVAPORATION
-     * Removes ALL water using direct section access
+     * Removes water blocks efficiently using direct section access.
+     * Water above solid ground becomes fire, water above water becomes air.
      */
     private static boolean evaporateWater(LevelChunk chunk, ServerLevel level, int minBuildHeight, int maxBuildHeight) {
         final BlockState airState = Blocks.AIR.defaultBlockState();
+
         final int chunkX = chunk.getPos().x;
         final int chunkZ = chunk.getPos().z;
+        final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         boolean hadChanges = false;
 
-        // Process current chunk + all 8 neighbors (3x3 grid = 9 chunks total)
+        // Process 3x3 chunk grid (current chunk + 8 neighbors)
         for (int offsetX = -1; offsetX <= 1; offsetX++) {
             for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
                 final int targetChunkX = chunkX + offsetX;
@@ -212,88 +220,92 @@ public class Generator {
                 final LevelChunk targetChunk = level.getChunk(targetChunkX, targetChunkZ);
                 final LevelChunkSection[] sections = targetChunk.getSections();
                 final int minSection = targetChunk.getMinSection();
-                final int startX = targetChunkX << 4; // Multiply by 16
+                final int startX = targetChunkX << 4;
                 final int startZ = targetChunkZ << 4;
 
-                // Calculate section range to avoid useless loops
+                // Calculate Y-section range to skip empty vertical space
                 final int minSecIndex = Math.max(0, (minBuildHeight >> 4) - minSection);
                 final int maxSecIndex = Math.min(sections.length - 1, (maxBuildHeight >> 4) - minSection);
 
-                // Track which sections were modified (for batch recalc)
-                final boolean[] dirtySection = new boolean[sections.length];
-
-                // Loop on sections, not individual Y blocks
+                // Iterate through sections from top to bottom
                 for (int secIndex = maxSecIndex; secIndex >= minSecIndex; secIndex--) {
                     final LevelChunkSection section = sections[secIndex];
 
-                    // Skip empty sections
                     if (section == null || section.hasOnlyAir())
                         continue;
 
-                    // Calculate section's world Y coordinate
                     final int sectionWorldY = (secIndex + minSection) << 4;
+                    boolean sectionModified = false;
 
-                    // Loop on local coordinates (0-15) instead of world coords
+                    // Process blocks within this section (Y: 15 → 0)
                     for (int ly = 15; ly >= 0; ly--) {
                         final int worldY = sectionWorldY + ly;
 
-                        // Early exit if below evaporation limit
+                        // Stop if we've reached the evaporation floor
                         if (worldY <= ConfigManager.minWaterEvaporationHeight)
                             break;
 
                         if (worldY < minBuildHeight || worldY >= maxBuildHeight)
                             continue;
 
+                        // Check all 16x16 horizontal positions in this Y-layer
                         for (int lx = 0; lx < 16; lx++) {
                             for (int lz = 0; lz < 16; lz++) {
-                                // Direct section access
                                 final BlockState state = section.getBlockState(lx, ly, lz);
 
-                                if (Analyzer.isEvaporable(state)) {
-                                    // Direct section modification
-                                    section.setBlockState(lx, ly, lz, airState, false);
-                                    dirtySection[secIndex] = true;
-                                    hadChanges = true;
+                                if (!Analyzer.isEvaporable(state))
+                                    continue;
 
-                                    BlockPos pos = new BlockPos(startX + lx, worldY, startZ + lz);
+                                // Validity controls
+                                if (level.isOutsideBuildHeight(mutablePos))
+                                    continue;
+                                if (!level.isClientSide && level.isDebug())
+                                    continue;
 
-                                    // fix light under sea
-                                    if (worldY - 1 >= minBuildHeight) {
-                                        BlockPos below = pos.below();
-                                        BlockState belowState = targetChunk.getBlockState(below);
-                                        if (belowState.canOcclude() || belowState.isSolidRender(level, below)) {
-                                            int lightY = worldY;
-                                            int lightSecIndex = (lightY >> 4) - minSection;
-                                            if (lightSecIndex >= 0 && lightSecIndex < sections.length) {
-                                                LevelChunkSection lightSection = sections[lightSecIndex];
-                                                if (lightSection != null) {
-                                                    int lightLy = lightY & 15;
-                                                    lightSection.setBlockState(lx, lightLy, lz,
-                                                            Blocks.LIGHT.defaultBlockState(), false);
+                                mutablePos.set(startX + lx, worldY, startZ + lz);
 
-                                                    // Force light update
-                                                    level.getChunkSource().getLightEngine().checkBlock(pos);
-                                                    level.scheduleTick(pos, Blocks.LIGHT, 10);
-                                                }
-                                            }
-                                        }
-                                    }
+                                // Use immutable to prevent leaks
+                                BlockPos pos = mutablePos.immutable();
+
+                                // Local coordinates (0–15) within the section
+                                int localX = pos.getX() & 15;
+                                int localY = worldY & 15;
+                                int localZ = pos.getZ() & 15;
+
+                                // Previous block state
+                                BlockState oldState = section.setBlockState(localX, localY, localZ, airState);
+
+                                if (oldState == airState) {
+                                    continue; // No actual change
                                 }
+
+                                // Light management
+                                if (LightEngine.hasDifferentLightProperties(targetChunk, pos, oldState,
+                                        airState)) {
+                                    ProfilerFiller profiler = level.getProfiler();
+                                    profiler.push("updateSkyLightSources");
+                                    targetChunk.getSkyLightSources().update(targetChunk, localX, worldY, localZ);
+                                    profiler.popPush("queueCheckLight");
+                                    level.getChunkSource().getLightEngine().checkBlock(pos);
+                                    profiler.pop();
+                                }
+
                             }
                         }
+                        sectionModified = true;
+                    }
+
+                    // Recalculate block counts immediately after modifying this section
+                    if (sectionModified) {
+                        section.recalcBlockCounts();
+                        hadChanges = true;
                     }
                 }
 
-                // Batch recalc only modified sections (not every block)
-                for (int i = 0; i < sections.length; i++) {
-                    if (dirtySection[i] && sections[i] != null) {
-                        sections[i].recalcBlockCounts();
-                    }
-                }
-
-                // Mark chunk as unsaved only if it has changes
+                // Mark chunk for saving if modified
                 if (hadChanges) {
                     targetChunk.setUnsaved(true);
+                    Heightmap.primeHeightmaps(targetChunk, targetChunk.getStatus().heightmapsAfter());
                 }
             }
         }
