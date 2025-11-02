@@ -140,6 +140,11 @@ public class Generator {
                 return;
             }
 
+            // Process only overworld
+            if (level.dimension() != Level.OVERWORLD) {
+                return;
+            }
+
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
 
             // Calculate current phase number (0-4)
