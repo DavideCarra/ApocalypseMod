@@ -1,0 +1,24 @@
+{
+  "block.judgementday.ash_block": "灰烬方块",
+
+  "apocalypse.phase1.title": "第一阶段：太阳依旧升起",
+  "apocalypse.phase1.description": "太阳开始灼烧大地...树叶燃烧，但你仍可在户外生存.",
+  
+  "apocalypse.phase2.title": "第二阶段：大地干涸",
+  "apocalypse.phase2.description": "水分逐渐蒸发,树木化为灰烬,炎热变得难以忍受.",
+  
+  "apocalypse.phase3.title": "第三阶段：万物俱焚",
+  "apocalypse.phase3.description": "天空染成赤红,土地尽数成灰,生灵在烈焰中消亡.",
+  
+  "apocalypse.phase4.title": "第四阶段：灰烬世界",
+  "apocalypse.phase4.description": "昔日的森林所在,唯余灰烬残,火焰吞噬了大部分生命.",
+  
+  "apocalypse.phase5.title": "第五阶段：世界死亡",
+  "apocalypse.phase5.description": "万物皆化为灰烬,生命彻底灭绝,唯死亡长存.",
+  
+  "apocalypse.phase6.title": "第六阶段：审判之日",
+  "apocalypse.phase6.description": "希望不复存在,末日已然降临,世界终成灰烬.",
+
+  "apocalypse.phase_end.title": "最终阶段：重生",
+  "apocalypse.phase_end.description": "太阳恢复平静,你可以重返地表,尽管 世界已化为灰烬荒漠，但你幸存了下来."
+}
