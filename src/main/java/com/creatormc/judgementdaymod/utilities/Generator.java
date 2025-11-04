@@ -7,6 +7,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 import com.creatormc.judgementdaymod.handlers.DayTracker;
+import com.creatormc.judgementdaymod.handlers.PhaseTitleOverlay;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.setup.ModBlocks;
@@ -85,11 +86,8 @@ public class Generator {
             // Calculate percentage for Phase
             int percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
             Phase currentPhase = Phase.getPhaseForPercent(percent);
-
-            // Send title and subtitle
-            player.connection.send(new ClientboundSetTitleTextPacket(currentPhase.getTitleComponent()));
-            player.connection.send(new ClientboundSetSubtitleTextPacket(currentPhase.getDescriptionComponent()));
-            player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
+            PhaseTitleOverlay.displayPhaseTitle(currentPhase.getTitleComponent(),
+                    currentPhase.getDescriptionComponent());
 
             // Start music for the new phase
             if (ConfigManager.apocalypseCurrentDay <= ConfigManager.apocalypseEndDay) {
@@ -122,9 +120,8 @@ public class Generator {
                     resetPlayerChunks(player);
                 }
             } else if (ConfigManager.apocalypseCurrentDay == ConfigManager.apocalypseEndDay) {
-                player.connection.send(new ClientboundSetTitleTextPacket(Phase.PHASE_END.getTitleComponent()));
-                player.connection.send(new ClientboundSetSubtitleTextPacket(Phase.PHASE_END.getDescriptionComponent()));
-                player.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
+                PhaseTitleOverlay.displayPhaseTitle(Phase.PHASE_END.getTitleComponent(),
+                        Phase.PHASE_END.getDescriptionComponent());
             }
         }
     }
@@ -294,6 +291,14 @@ public class Generator {
 
                                 // Previous block state
                                 BlockState oldState = section.setBlockState(localX, localY, localZ, airState);
+
+                                if (Analyzer.isEvaporable(oldState)) {
+                                    BlockPos above = mutablePos.above();
+                                    BlockState aboveState = level.getBlockState(above);
+                                    if (aboveState.getBlock() instanceof FallingBlock) {
+                                        level.scheduleTick(above, aboveState.getBlock(), 1);
+                                    }
+                                }
 
                                 if (oldState == airState) {
                                     continue; // No actual change

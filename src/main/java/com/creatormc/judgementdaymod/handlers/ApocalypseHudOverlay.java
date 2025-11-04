@@ -17,7 +17,6 @@ public class ApocalypseHudOverlay {
     @SubscribeEvent
     public static void onRenderOverlay(RenderGuiEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
-
         ClientLevel level = mc.level;
 
         // Only render in-game (not in menu)
@@ -35,16 +34,21 @@ public class ApocalypseHudOverlay {
             return;
         }
 
+        // Get screen dimensions before scaling
+        int screenWidth = event.getWindow().getGuiScaledWidth();
+        int screenHeight = event.getWindow().getGuiScaledHeight();
+
         // Compute normalized progress (0 = start, 1 = end)
-        float progress = (float) currentDay / (float) ConfigManager.apocalypseMaxDays;
+        float progress = (float) currentDay / (float) maxDay;
         progress = Math.min(1.0F, Math.max(0.0F, progress));
 
         // Color transitions from dull green → yellow → orange → red
-        float r = 0.4F + progress * 0.6F; // starts darker (0.4) and rises to full red
-        float g = 0.8F - progress * 0.7F; // starts at 0.8 and fades out
-        float b = 0.3F - progress * 0.3F; // start slightly warm, fades to zero
+        float r = 0.4F + progress * 0.6F;
+        float g = 0.8F - progress * 0.7F;
+        float b = 0.3F - progress * 0.3F;
 
-        if (level != null && daysLeft <= 5) {
+        // Pulse effect when less than 5 days left
+        if (daysLeft <= 5) {
             float pulse = (float) (Math.sin(level.getGameTime() * 0.3F) * 0.25F + 0.75F);
             r *= pulse;
             g *= pulse;
@@ -56,30 +60,42 @@ public class ApocalypseHudOverlay {
         Font font = mc.font;
         String text = "Days left: " + daysLeft;
 
-        // Coordinates (bottom-left corner)
-        int x = 10;
-        int y = event.getWindow().getGuiScaledHeight() - 20;
+        // Calculate adaptive scale based on screen width
+        // Smaller screens get smaller text, larger screens get larger text
+        float scale = Math.min(1.5F, screenWidth / 800.0F);
+        
+        // Ensure minimum readable size
+        scale = Math.max(0.8F, scale);
 
-        RenderSystem.enableBlend();
-
-        // Scale up the text (e.g. 1.5x)
-        float scale = 1.5F;
         var poseStack = event.getGuiGraphics().pose();
         poseStack.pushPose();
         poseStack.scale(scale, scale, 1.0F);
 
-        // Adjust position so it stays in bottom-left corner after scaling
-        x = (int) (10 / scale);
-        y = (int) ((event.getWindow().getGuiScaledHeight() - 20) / scale);
+        // Calculate text width to prevent overflow
+        int textWidth = (int) (font.width(text) * scale);
+        
+        // Position text in bottom-left, accounting for scale
+        int x = (int) (10 / scale);
+        int y = (int) ((screenHeight - 20) / scale);
 
-        // Draw the text
+        // Ensure text doesn't go off-screen
+        if (textWidth + 10 > screenWidth) {
+            scale *= (screenWidth - 20) / (float) textWidth;
+            poseStack.scale(scale / 1.5F, scale / 1.5F, 1.0F);
+            x = (int) (10 / scale);
+            y = (int) ((screenHeight - 20) / scale);
+        }
+
+        RenderSystem.enableBlend();
+
+        // Draw the text with shadow for better readability
         event.getGuiGraphics().drawString(
                 font,
                 text,
                 x,
                 y,
                 color,
-                true // draw with shadow
+                true
         );
 
         poseStack.popPose();
