@@ -90,80 +90,31 @@ public class RitualEvents {
     }
 
     private static boolean isValidRitual(Level level, BlockPos center) {
-        return checkPattern(level, center, "north") ||
-                checkPattern(level, center, "south") ||
-                checkPattern(level, center, "east") ||
-                checkPattern(level, center, "west");
-    }
+        // center = Ash Block (the one you right–clicked)
 
-    private static boolean checkPattern(Level level, BlockPos center, String direction) {
-        BlockPos eggPos, reinforcedPos, debrisPos;
+        BlockPos debrisPos = center.above(); // Ancient Debris just above Ash
+        BlockPos reinforcedPos = center.above(2); // Reinforced Deepslate above debris
+        BlockPos eggPos = center.above(3); // Dragon Egg on top
 
-        switch (direction) {
-            case "north":
-                eggPos = center.north();
-                reinforcedPos = center.south().west();
-                debrisPos = center.south().east();
-                break;
-            case "south":
-                eggPos = center.south();
-                reinforcedPos = center.north().east();
-                debrisPos = center.north().west();
-                break;
-            case "east":
-                eggPos = center.east();
-                reinforcedPos = center.west().north();
-                debrisPos = center.west().south();
-                break;
-            case "west":
-                eggPos = center.west();
-                reinforcedPos = center.east().south();
-                debrisPos = center.east().north();
-                break;
-            default:
-                return false;
-        }
-
-        BlockState eggState = level.getBlockState(eggPos);
-        BlockState reinforcedState = level.getBlockState(reinforcedPos);
         BlockState debrisState = level.getBlockState(debrisPos);
+        BlockState reinforcedState = level.getBlockState(reinforcedPos);
+        BlockState eggState = level.getBlockState(eggPos);
 
-        return eggState.is(Blocks.DRAGON_EGG) &&
-                reinforcedState.is(Blocks.REINFORCED_DEEPSLATE) &&
-                debrisState.is(Blocks.ANCIENT_DEBRIS);
+        return debrisState.is(Blocks.ANCIENT_DEBRIS)
+                && reinforcedState.is(Blocks.REINFORCED_DEEPSLATE)
+                && eggState.is(Blocks.DRAGON_EGG);
     }
 
     private static void performHeartOfOblivionRitual(ServerLevel level, BlockPos center) {
         // Find the valid orientation
-        BlockPos eggPos = null;
-        BlockPos reinforcedPos = null;
-        BlockPos debrisPos = null;
+        BlockPos debrisPos = center.above(); // Ancient Debris
+        BlockPos reinforcedPos = center.above(2); // Reinforced Deepslate
+        BlockPos eggPos = center.above(3); // Dragon Egg
 
-        if (checkPattern(level, center, "north")) {
-            eggPos = center.north();
-            reinforcedPos = center.south().west();
-            debrisPos = center.south().east();
-        } else if (checkPattern(level, center, "south")) {
-            eggPos = center.south();
-            reinforcedPos = center.north().east();
-            debrisPos = center.north().west();
-        } else if (checkPattern(level, center, "east")) {
-            eggPos = center.east();
-            reinforcedPos = center.west().south();
-            debrisPos = center.west().north();
-        } else if (checkPattern(level, center, "west")) {
-            eggPos = center.west();
-            reinforcedPos = center.east().north();
-            debrisPos = center.east().south();
-        }
-
-        if (eggPos == null || reinforcedPos == null || debrisPos == null) {
+        // If for some reason the pattern is no longer valid, abort
+        if (!isValidRitual(level, center)) {
             return;
         }
-
-        final BlockPos definedEggPos = eggPos;
-        final BlockPos definedReinforcedPos = reinforcedPos;
-        final BlockPos definedDebrisPos = debrisPos;
 
         Vec3 spawnPos = Vec3.atCenterOf(center.above());
 
@@ -189,9 +140,9 @@ public class RitualEvents {
         level.getServer().tell(new net.minecraft.server.TickTask(50, () -> {
             // Strike lightning at each ritual block
             strikeLightning(level, center);
-            strikeLightning(level, definedEggPos);
-            strikeLightning(level, definedReinforcedPos);
-            strikeLightning(level, definedDebrisPos);
+            strikeLightning(level, eggPos);
+            strikeLightning(level, reinforcedPos);
+            strikeLightning(level, debrisPos);
 
             level.playSound(null, center, SoundEvents.LIGHTNING_BOLT_THUNDER, SoundSource.BLOCKS, 1.5f, 0.8f);
         }));
@@ -439,7 +390,9 @@ public class RitualEvents {
             }
 
             // Heart disappears
-            heart.discard();
+            level.getServer().tell(new TickTask(40, () -> {
+                heart.discard();
+            }));
 
             if (player != null) {
                 ConfigManager.apocalypseEndDay = ConfigManager.apocalypseCurrentDay;
