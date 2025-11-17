@@ -1,12 +1,16 @@
 package com.creatormc.judgementdaymod.handlers;
 
 import com.creatormc.judgementdaymod.setup.ModItems;
+import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
+import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.setup.ModBlocks;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.server.TickTask;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -37,12 +41,46 @@ public class RitualEvents {
             return;
 
         BlockState state = level.getBlockState(pos);
+        ServerLevel serverLevel = (ServerLevel) level;
 
+        // Player and item in main hand
+        ItemStack held = event.getItemStack();
+        var entity = event.getEntity();
+
+        // -------------------------------------------------
+        // SECOND RITUAL: right–click GRASS_BLOCK with Heart
+        // -------------------------------------------------
+        if (state.is(Blocks.GRASS_BLOCK) && held.is(ModItems.HEART_OF_OBLIVION.get())) {
+
+            // Consume one Heart of Oblivion (unless in creative)
+            if (entity instanceof ServerPlayer player && !player.getAbilities().instabuild) {
+                held.shrink(1);
+            }
+
+            // Spawn a fake dropped heart entity at ritual position
+            ItemEntity heartEntity = new ItemEntity(
+                    serverLevel,
+                    pos.getX() + 0.5,
+                    pos.getY() + 1.0, // slightly above the grass
+                    pos.getZ() + 0.5,
+                    new ItemStack(ModItems.HEART_OF_OBLIVION.get()));
+            serverLevel.addFreshEntity(heartEntity);
+
+            System.out.println("SPAWN HEART ENTITY: " + heartEntity);
+
+            // Call your epic ritual logic
+            ServerPlayer player = entity instanceof ServerPlayer sp ? sp : null;
+            performHeartOnGrassRitualS(serverLevel, heartEntity, player);
+
+            return; // do not run the ash-block ritual
+        }
+
+        // ---------------------------------
+        // FIRST RITUAL: Ash Block pattern
+        // ---------------------------------
         if (!state.is(ModBlocks.ASH_BLOCK.get())) {
             return;
         }
-
-        ServerLevel serverLevel = (ServerLevel) level;
 
         if (!isValidRitual(serverLevel, pos)) {
             return;
@@ -297,4 +335,122 @@ public class RitualEvents {
             level.addFreshEntity(lightning);
         }
     }
+
+    private static void performHeartOnGrassRitualS(ServerLevel level, ItemEntity heart, ServerPlayer player) {
+        final Vec3 center = heart.position();
+        final BlockPos centerPos = heart.blockPosition();
+
+        // Freeze the heart above the ground
+        heart.setNoGravity(true);
+        heart.setDeltaMovement(Vec3.ZERO);
+        heart.noPhysics = true;
+        heart.setInvulnerable(true);
+
+        // Dramatic thunderstorm
+        level.setWeatherParameters(0, 6000, true, true);
+
+        // --- PHASE 1: dark sounds + smoke
+        level.playSound(null, centerPos, SoundEvents.WITHER_SPAWN, SoundSource.AMBIENT, 1.5f, 0.5f);
+
+        for (int i = 0; i < 50; i++) {
+            double offX = (level.random.nextDouble() - 0.5) * 2.0;
+            double offZ = (level.random.nextDouble() - 0.5) * 2.0;
+            double offY = level.random.nextDouble() * 1.5;
+
+            level.sendParticles(ParticleTypes.SMOKE,
+                    center.x + offX, center.y + offY, center.z + offZ,
+                    1, 0, 0, 0, 0.02);
+
+            level.sendParticles(ParticleTypes.SOUL,
+                    center.x + offX, center.y + offY, center.z + offZ,
+                    1, 0, 0.02, 0, 0.02);
+        }
+
+        // --- PHASE 2: portal vortex (after 1s)
+        level.getServer().tell(new TickTask(20, () -> {
+            level.playSound(null, centerPos, SoundEvents.PORTAL_TRIGGER, SoundSource.BLOCKS, 1.2f, 0.7f);
+
+            for (int i = 0; i < 100; i++) {
+                double angle = (i / 100.0) * Math.PI * 4;
+                double radius = 3.0;
+                double height = (i / 100.0) * 3.0;
+
+                double x = center.x + Math.cos(angle) * radius;
+                double z = center.z + Math.sin(angle) * radius;
+                double y = center.y + height * 0.05;
+
+                level.sendParticles(ParticleTypes.REVERSE_PORTAL,
+                        x, y, z,
+                        2, 0.1, 0.1, 0.1, 0.2);
+
+                level.sendParticles(ParticleTypes.WITCH,
+                        x, y, z,
+                        1, 0, 0, 0, 0);
+            }
+        }));
+
+        // --- PHASE 3: lightning circle (after 2s)
+        level.getServer().tell(new TickTask(40, () -> {
+            level.playSound(null, centerPos, SoundEvents.LIGHTNING_BOLT_THUNDER, SoundSource.WEATHER, 2.0f, 0.9f);
+
+            for (int i = 0; i < 8; i++) {
+                double angle = (i / 8.0) * Math.PI * 2;
+                double radius = 6.0;
+
+                double x = center.x + Math.cos(angle) * radius;
+                double z = center.z + Math.sin(angle) * radius;
+
+                BlockPos strikePos = BlockPos.containing(x, center.y, z);
+
+                var lightning = EntityType.LIGHTNING_BOLT.create(level);
+                if (lightning != null) {
+                    lightning.moveTo(strikePos.getX() + 0.5, strikePos.getY(), strikePos.getZ() + 0.5);
+                    lightning.setVisualOnly(true);
+                    level.addFreshEntity(lightning);
+                }
+
+                level.sendParticles(ParticleTypes.EXPLOSION,
+                        strikePos.getX() + 0.5,
+                        strikePos.getY() + 0.5,
+                        strikePos.getZ() + 0.5,
+                        3, 0.5, 0.5, 0.5, 0.1);
+            }
+        }));
+
+        // --- PHASE 4: explosion + ritual success (after 3s)
+        level.getServer().tell(new TickTask(60, () -> {
+
+            level.playSound(null, centerPos, SoundEvents.ENDER_DRAGON_GROWL, SoundSource.AMBIENT, 2.0f, 0.5f);
+            level.playSound(null, centerPos, SoundEvents.END_PORTAL_SPAWN, SoundSource.BLOCKS, 1.5f, 1.2f);
+
+            // Particle burst
+            for (int i = 0; i < 200; i++) {
+                double vx = (level.random.nextDouble() - 0.5) * 2.0;
+                double vy = (level.random.nextDouble() - 0.5) * 2.0;
+                double vz = (level.random.nextDouble() - 0.5) * 2.0;
+
+                level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME,
+                        center.x, center.y + 0.5, center.z,
+                        1, vx, vy, vz, 0.3);
+
+                level.sendParticles(ParticleTypes.END_ROD,
+                        center.x, center.y + 0.5, center.z,
+                        1, vx * 0.5, vy * 0.5, vz * 0.5, 0.1);
+            }
+
+            // Heart disappears
+            heart.discard();
+
+            if (player != null) {
+                ConfigManager.apocalypseEndDay = ConfigManager.apocalypseCurrentDay;
+                if (ConfigManager.apocalypseMaxDays >= ConfigManager.apocalypseCurrentDay) {
+                    ConfigManager.apocalypseMaxDays = ConfigManager.apocalypseCurrentDay - 1;
+                }
+                PhaseTitleOverlay.displayPhaseTitle(Phase.PHASE_END.getTitleComponent(),
+                        Phase.PHASE_END.getDescriptionComponent());
+            }
+            ConfigManager.save();
+        }));
+    }
+
 }

@@ -142,8 +142,9 @@ public class Generator {
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
 
             // Calculate current phase number (0-4)
-            int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay,
-                    ConfigManager.apocalypseMaxDays / 5);
+            final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
+
+            int currentPhaseNumber = Math.min(5, (int) (percent / 20.0f));
 
             ApocalypseChunkData data = ApocalypseChunkData.get(level);
             ChunkPos chunkPos = chunk.getPos();
@@ -160,7 +161,6 @@ public class Generator {
                 return;
             }
 
-            final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
 
             boolean hadChanges = false;
 
