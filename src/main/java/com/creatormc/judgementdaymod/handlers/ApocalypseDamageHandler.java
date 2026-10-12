@@ -8,12 +8,14 @@ import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -26,7 +28,6 @@ public class ApocalypseDamageHandler {
 
     private static int tickCounter = 0;
     private static final int TICK_INTERVAL = 20; // 1 second
-    private static final Map<UUID, Boolean> skyCache = new HashMap<>();
 
     // Map UUID → heat level (0–10)
     private static final Map<UUID, Float> heatLevels = new HashMap<>();
@@ -167,15 +168,22 @@ public class ApocalypseDamageHandler {
                 NetworkHandler.sendToClient(new HeatSyncPacket(heat), serverPlayer);
             }
         }
+    }
 
-        // Cleanup map to avoid memory accumulation
-        if (serverLevel.getGameTime() % 1200 == 0) { // every 60 seconds
-            heatLevels.keySet().removeIf(id -> serverLevel.getEntity(id) == null);
-            // Periodically clean up the sky visibility cache to prevent memory growth
-            skyCache.keySet().removeIf(id -> {
-                var e = serverLevel.getEntity(id);
-                return e == null || e.isRemoved();
-            });
+    /**
+     * Forgets the heat of entities that are gone for good (killed or discarded, e.g.
+     * despawned), so the map does not grow forever. Entities that are only unloaded
+     * (chunk unloaded, player logged out, dimension change) keep their heat.
+     */
+    @SubscribeEvent
+    public static void onEntityLeave(EntityLeaveLevelEvent event) {
+        if (event.getLevel().isClientSide())
+            return;
+
+        Entity entity = event.getEntity();
+        Entity.RemovalReason reason = entity.getRemovalReason();
+        if (reason != null && reason.shouldDestroy()) {
+            heatLevels.remove(entity.getUUID());
         }
     }
 
@@ -184,9 +192,8 @@ public class ApocalypseDamageHandler {
         LivingEntity entity = event.getEntity();
         UUID id = entity.getUUID();
 
-        // Remove from maps
+        // Remove from map
         heatLevels.remove(id);
-        skyCache.remove(id);
 
         // Send reset packet to client (if player)
         if (entity instanceof ServerPlayer serverPlayer) {
