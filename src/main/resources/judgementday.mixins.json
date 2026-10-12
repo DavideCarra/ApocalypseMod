@@ -8,7 +8,8 @@
         "ServerLevelMixin",
         "ChunkGeneratorAccessor",
         "ServerChunkCacheAccessor",
-        "ChunkMapAccessor"
+        "ChunkMapAccessor",
+        "ChunkHolderMixin"
     ],
     "injectors": {
         "defaultRequire": 1

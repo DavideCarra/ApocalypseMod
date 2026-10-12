@@ -1,8 +1,6 @@
 package com.creatormc.judgementdaymod.utilities;
 
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 
@@ -167,7 +165,7 @@ public class Generator {
             // PHASE 1: Water evaporation
             if (percent >= 40.0 || ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays) {
                 hadChanges |= evaporateWater(chunk, level, ConfigManager.minWaterEvaporationHeight,
-                        level.getMaxBuildHeight());
+                        level.getMaxBuildHeight(), data, currentPhaseNumber);
             }
 
             // PHASE 2: Surface transformation
@@ -196,8 +194,13 @@ public class Generator {
      * WATER EVAPORATION
      * Removes water blocks efficiently using direct section access.
      * Water above solid ground becomes fire, water above water becomes air.
+     *
+     * @param data               chunk phase data, used to know which neighbours
+     *                           will not be processed (and re-sent) again
+     * @param currentPhaseNumber phase the center chunk is being processed for
      */
-    private static boolean evaporateWater(LevelChunk chunk, ServerLevel level, int minBuildHeight, int maxBuildHeight) {
+    private static boolean evaporateWater(LevelChunk chunk, ServerLevel level, int minBuildHeight, int maxBuildHeight,
+            ApocalypseChunkData data, int currentPhaseNumber) {
         final BlockState airState = Blocks.AIR.defaultBlockState();
 
         final int chunkX = chunk.getPos().x;
@@ -227,7 +230,9 @@ public class Generator {
                 final int minSecIndex = Math.max(0, (minBuildHeight >> 4) - minSection);
                 final int maxSecIndex = Math.min(sections.length - 1, (maxBuildHeight >> 4) - minSection);
 
-                List<Integer> sectionsWithWater = new ArrayList<>();
+                // Indices of the sections that may contain water, top to bottom
+                final int[] sectionsWithWater = new int[sections.length];
+                int sectionsWithWaterCount = 0;
                 for (int secIndex = maxSecIndex; secIndex >= minSecIndex; secIndex--) {
                     final LevelChunkSection section = sections[secIndex];
 
@@ -236,16 +241,25 @@ public class Generator {
 
                     // Fast check: does this section contain water?
                     if (section.maybeHas(isEvaporable)) {
-                        sectionsWithWater.add(secIndex);
+                        sectionsWithWater[sectionsWithWaterCount++] = secIndex;
                     }
                 }
 
                 // If no section has water, skip this chunk entirely
-                if (sectionsWithWater.isEmpty())
+                if (sectionsWithWaterCount == 0)
                     continue;
 
+                // A neighbour already processed for this phase is never re-sent, so the
+                // water removed here (e.g. water that flowed back in from a chunk processed
+                // later) must be sent to clients block by block, otherwise they keep seeing
+                // "ghost" water walls that do not exist on the server.
+                final boolean notifyClients = (offsetX != 0 || offsetZ != 0)
+                        && currentPhaseNumber <= data.getPhase(targetChunk.getPos());
+                boolean chunkChanged = false;
+
                 // Iterate ONLY over sections that contain water
-                for (int secIndex : sectionsWithWater) {
+                for (int i = 0; i < sectionsWithWaterCount; i++) {
+                    final int secIndex = sectionsWithWater[i];
                     final LevelChunkSection section = sections[secIndex];
 
                     if (section == null || section.hasOnlyAir())
@@ -253,6 +267,11 @@ public class Generator {
 
                     final int sectionWorldY = (secIndex + minSection) << 4;
                     boolean sectionModified = false;
+
+                    // isEvaporable is a pure function of the state and a section holds long
+                    // runs of the same state: remember the last answer
+                    BlockState lastState = null;
+                    boolean lastEvaporable = false;
 
                     // Process blocks within this section (Y: 15 → 0)
                     for (int ly = 15; ly >= 0; ly--) {
@@ -270,7 +289,11 @@ public class Generator {
                             for (int lz = 0; lz < 16; lz++) {
                                 final BlockState state = section.getBlockState(lx, ly, lz);
 
-                                if (!Analyzer.isEvaporable(state))
+                                if (state != lastState) {
+                                    lastState = state;
+                                    lastEvaporable = Analyzer.isEvaporable(state);
+                                }
+                                if (!lastEvaporable)
                                     continue;
 
                                 // Validity controls
@@ -301,6 +324,11 @@ public class Generator {
                                     continue; // No actual change
                                 }
 
+                                chunkChanged = true;
+                                if (notifyClients) {
+                                    level.getChunkSource().blockChanged(mutablePos);
+                                }
+
                                 // Light management
                                 if (LightEngine.hasDifferentLightProperties(targetChunk, mutablePos, oldState,
                                         airState)) {
@@ -327,7 +355,16 @@ public class Generator {
                 // Mark chunk for saving if modified
                 if (hadChanges) {
                     targetChunk.setUnsaved(true);
-                    Heightmap.primeHeightmaps(targetChunk, targetChunk.getStatus().heightmapsAfter());
+                    // Heightmaps only need rebuilding if a block of THIS chunk changed:
+                    // on an untouched chunk they are already exact and priming is a no-op
+                    if (chunkChanged) {
+                        Heightmap.primeHeightmaps(targetChunk, targetChunk.getStatus().heightmapsAfter());
+                    }
+                }
+
+                // Light checks were queued for this chunk: forward the final light to clients
+                if (chunkChanged) {
+                    ChunkLightSync.watchArea(level, targetChunkX, targetChunkZ);
                 }
             }
         }
@@ -561,7 +598,6 @@ public class Generator {
                 if (chunk != null) {
                     ChunkToProcess task = new ChunkToProcess(level, cx, cz);
                     DayTracker.enqueueChunk(task);
-                    DayTracker.enqueueLightUpdateChunk(task);
                 }
             }
         }

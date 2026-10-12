@@ -18,6 +18,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.blending.Blender;
@@ -59,19 +60,42 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         } else {
 
             return before.fillFromNoise(ex, blender, rs, sm, chunk).thenApply(chunkAccess -> {
-                // Replace all water with air
-                for (int x = 0; x < 16; x++) {
-                    for (int z = 0; z < 16; z++) {
-                        for (int y = chunk.getMinBuildHeight(); y < chunk.getMaxBuildHeight(); y++) {
-                            BlockPos pos = new BlockPos(x, y, z);
-                            if (chunk.getBlockState(pos).is(Blocks.WATER)) {
-                                chunk.setBlockState(pos, Blocks.AIR.defaultBlockState(), false);
-                            }
+                replaceWaterWithAir(chunk);
+                return chunkAccess;
+            });
+        }
+    }
+
+    /**
+     * Replaces every water block of the chunk with air.
+     */
+    static void replaceWaterWithAir(ChunkAccess chunk) {
+        // Sections whose palette has no water can't contain any: skip them.
+        // (Removing water only adds air, so this never changes while looping.)
+        final LevelChunkSection[] sections = chunk.getSections();
+        final boolean[] sectionMayHaveWater = new boolean[sections.length];
+        for (int i = 0; i < sections.length; i++) {
+            sectionMayHaveWater[i] = sections[i] != null
+                    && sections[i].maybeHas(state -> state.is(Blocks.WATER));
+        }
+        final int minSection = chunk.getMinSection();
+
+        // Same x → z → y order as a plain scan of the whole column
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                for (int i = 0; i < sections.length; i++) {
+                    if (!sectionMayHaveWater[i])
+                        continue;
+
+                    final int sectionMinY = (minSection + i) << 4;
+                    for (int y = sectionMinY; y < sectionMinY + 16; y++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+                        if (chunk.getBlockState(pos).is(Blocks.WATER)) {
+                            chunk.setBlockState(pos, Blocks.AIR.defaultBlockState(), false);
                         }
                     }
                 }
-                return chunkAccess;
-            });
+            }
         }
     }
 
