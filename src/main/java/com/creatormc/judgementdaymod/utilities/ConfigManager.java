@@ -22,6 +22,13 @@ public class ConfigManager {
     public static int minWaterEvaporationHeight = 60; // Minimum height for water evaporation
     public static int apocalypseEndDay = 200;
 
+    // Marks a value missing from the file (configs written by older versions)
+    public static final int UNSET = Integer.MIN_VALUE;
+    // Last phase whose effects (heights, title, music) were applied
+    public static int lastAppliedPhase = UNSET;
+    // Destruction step reached on the last day of the apocalypse (see Generator)
+    public static int lastApocalypseStep = UNSET;
+
     /**
      * Attempts to locate or create the configuration file in multiple possible
      * locations.
@@ -92,6 +99,12 @@ public class ConfigManager {
             apocalypseEndDay = Integer.parseInt(
                     props.getProperty("apocalypseEndDay", String.valueOf(apocalypseEndDay)));
 
+            lastAppliedPhase = Integer.parseInt(
+                    props.getProperty("lastAppliedPhase", String.valueOf(UNSET)));
+
+            lastApocalypseStep = Integer.parseInt(
+                    props.getProperty("lastApocalypseStep", String.valueOf(UNSET)));
+
             if (startBeforeApocalypse) {
                 startBeforeApocalypse = false;
                 apocalypseCurrentDay -= (apocalypseMaxDays / 5);
@@ -120,6 +133,12 @@ public class ConfigManager {
         props.setProperty("minWaterEvaporationHeight", String.valueOf(minWaterEvaporationHeight));
         props.setProperty("apocalypseEndDay", String.valueOf(apocalypseEndDay));
         props.setProperty("startBeforeApocalypse", String.valueOf(startBeforeApocalypse));
+        if (lastAppliedPhase != UNSET) {
+            props.setProperty("lastAppliedPhase", String.valueOf(lastAppliedPhase));
+        }
+        if (lastApocalypseStep != UNSET) {
+            props.setProperty("lastApocalypseStep", String.valueOf(lastApocalypseStep));
+        }
 
         try {
             Files.createDirectories(configPath.getParent());

@@ -3,6 +3,7 @@ package com.creatormc.judgementdaymod.setup;
 import com.creatormc.judgementdaymod.utilities.ApocalypseChunkData;
 import com.creatormc.judgementdaymod.utilities.ApocalypseManager;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
+import com.creatormc.judgementdaymod.utilities.Generator;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
@@ -153,7 +154,7 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         
         // Register this chunk in the persistent apocalypse data
         ApocalypseChunkData data = ApocalypseChunkData.get(region.getLevel());
-        data.setPhase(chunk.getPos(), 0); // Initial phase (unaffected)
+        data.setPhase(chunk.getPos(), Generator.stepForNewChunk()); // Initial phase
 
         // Skip if apocalypse is not active since terrain will turn to ash later anyway
         if (!ConfigManager.apocalypseActive) {

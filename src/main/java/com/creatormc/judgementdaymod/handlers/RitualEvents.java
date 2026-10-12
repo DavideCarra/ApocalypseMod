@@ -64,9 +64,9 @@ public class RitualEvents {
                     pos.getY() + 1.0, // slightly above the grass
                     pos.getZ() + 0.5,
                     new ItemStack(ModItems.HEART_OF_OBLIVION.get()));
+            // Part of the ritual, not a drop: it must not be picked back up
+            heartEntity.setNeverPickUp();
             serverLevel.addFreshEntity(heartEntity);
-
-            System.out.println("SPAWN HEART ENTITY: " + heartEntity);
 
             // Call your epic ritual logic
             ServerPlayer player = entity instanceof ServerPlayer sp ? sp : null;

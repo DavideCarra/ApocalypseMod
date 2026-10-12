@@ -16,36 +16,40 @@ import net.minecraft.world.level.LightLayer;
  * Keeps client lighting aligned with the server after direct section edits.
  *
  * Chunks are re-sent to clients right after processing, but the light checks
- * queued for the removed water are computed later by the light thread, so the
+ * queued for the edited blocks are computed later by the light thread, so the
  * packet carries the old light. Vanilla only forwards later light changes to
  * players at the edge of their view distance, so everybody else keeps the stale
  * light (also in the neighbouring chunks the light spills into).
  *
- * This class collects the sections whose light changed in the touched area and,
- * once the light engine has gone quiet for that chunk, sends one light update
- * packet with exactly those sections to every player viewing it.
+ * This class watches the edited area for a while and forwards to every player
+ * viewing it the sections whose light changed, once the light engine has gone
+ * quiet for that chunk. The light thread can lag far behind when it is busy
+ * (fast flight, phase changes), so a chunk stays watched for WATCH_TICKS after
+ * its last edit, whether or not its light has changed yet.
  * Client side only: server light, and so every game mechanic, is untouched.
  *
  * Main server thread only.
  */
 public final class ChunkLightSync {
 
-    // Ticks without new light changes before the light of a chunk is considered settled
+    // Ticks without new light changes before the changed sections of a chunk are sent
     private static final int QUIET_TICKS = 5;
-    // Upper bound to wait for a chunk whose light keeps changing (e.g. burning areas)
+    // Longest wait for a chunk whose light keeps changing (e.g. burning areas)
     private static final int MAX_WAIT_TICKS = 100;
+    // How long a chunk stays watched after its last edit
+    private static final int WATCH_TICKS = 600;
 
     private static final class Pending {
         final ServerLevel level;
         final BitSet skyChanged = new BitSet();
         final BitSet blockChanged = new BitSet();
-        final long firstTick;
+        long watchedUntil;
+        // Tick of the first change not sent yet, -1 when there is none
+        long firstChangeTick = -1;
         long lastChangeTick;
 
-        Pending(ServerLevel level, long now) {
+        Pending(ServerLevel level) {
             this.level = level;
-            this.firstTick = now;
-            this.lastChangeTick = now;
         }
     }
 
@@ -56,8 +60,8 @@ public final class ChunkLightSync {
     }
 
     /**
-     * Starts collecting light changes for the 3x3 chunk area centred on the given
-     * chunk (light spreads at most 15 blocks, so it never goes past the neighbours).
+     * Starts (or extends) watching the 3x3 chunk area centred on the given chunk
+     * (light spreads at most 15 blocks, so it never goes past the neighbours).
      */
     public static void watchArea(ServerLevel level, int chunkX, int chunkZ) {
         for (int dx = -1; dx <= 1; dx++) {
@@ -65,11 +69,10 @@ public final class ChunkLightSync {
                 long key = ChunkPos.asLong(chunkX + dx, chunkZ + dz);
                 Pending p = pending.get(key);
                 if (p == null) {
-                    pending.put(key, new Pending(level, tick));
-                } else {
-                    // New light checks were just queued: wait for them too
-                    p.lastChangeTick = tick;
+                    p = new Pending(level);
+                    pending.put(key, p);
                 }
+                p.watchedUntil = tick + WATCH_TICKS;
             }
         }
     }
@@ -97,6 +100,9 @@ public final class ChunkLightSync {
         } else {
             p.blockChanged.set(index);
         }
+        if (p.firstChangeTick < 0) {
+            p.firstChangeTick = tick;
+        }
         p.lastChangeTick = tick;
     }
 
@@ -111,23 +117,27 @@ public final class ChunkLightSync {
         ObjectIterator<Long2ObjectMap.Entry<Pending>> it = pending.long2ObjectEntrySet().fastIterator();
         while (it.hasNext()) {
             Long2ObjectMap.Entry<Pending> entry = it.next();
-            Pending p = entry.getValue();
+            // Read the entry before any removal: the fast iterator reuses it
+            final long key = entry.getLongKey();
+            final Pending p = entry.getValue();
 
-            boolean hasChanges = !p.skyChanged.isEmpty() || !p.blockChanged.isEmpty();
-            boolean settled = hasChanges && tick - p.lastChangeTick >= QUIET_TICKS;
-            boolean expired = tick - p.firstTick >= MAX_WAIT_TICKS;
-            if (!settled && !expired)
-                continue;
+            if (p.firstChangeTick >= 0
+                    && (tick - p.lastChangeTick >= QUIET_TICKS || tick - p.firstChangeTick >= MAX_WAIT_TICKS)) {
+                send(p, key);
+                p.skyChanged.clear();
+                p.blockChanged.clear();
+                p.firstChangeTick = -1;
+            }
 
-            it.remove();
-            if (hasChanges) {
-                send(p, new ChunkPos(entry.getLongKey()));
+            if (p.firstChangeTick < 0 && tick >= p.watchedUntil) {
+                it.remove();
             }
         }
     }
 
-    private static void send(Pending p, ChunkPos pos) {
+    private static void send(Pending p, long key) {
         ServerLevel level = p.level;
+        ChunkPos pos = new ChunkPos(key);
         if (!level.hasChunk(pos.x, pos.z))
             return;
 
