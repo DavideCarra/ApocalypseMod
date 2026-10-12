@@ -26,8 +26,12 @@ public class ConfigManager {
     public static final int UNSET = Integer.MIN_VALUE;
     // Last phase whose effects (heights, title, music) were applied
     public static int lastAppliedPhase = UNSET;
-    // Destruction step reached on the last day of the apocalypse (see Generator)
+    // Destruction step the world stays at when the ritual ends the apocalypse (see Generator)
     public static int lastApocalypseStep = UNSET;
+    // Day this version first ran a world already past apocalypseMaxDays (see Generator)
+    public static int stepOriginDay = UNSET;
+    // The file was written by an older version of the mod
+    public static boolean legacyConfig = false;
 
     /**
      * Attempts to locate or create the configuration file in multiple possible
@@ -99,8 +103,13 @@ public class ConfigManager {
             apocalypseEndDay = Integer.parseInt(
                     props.getProperty("apocalypseEndDay", String.valueOf(apocalypseEndDay)));
 
+            legacyConfig = !props.containsKey("lastAppliedPhase");
+
             lastAppliedPhase = Integer.parseInt(
                     props.getProperty("lastAppliedPhase", String.valueOf(UNSET)));
+
+            stepOriginDay = Integer.parseInt(
+                    props.getProperty("stepOriginDay", String.valueOf(UNSET)));
 
             lastApocalypseStep = Integer.parseInt(
                     props.getProperty("lastApocalypseStep", String.valueOf(UNSET)));
@@ -138,6 +147,9 @@ public class ConfigManager {
         }
         if (lastApocalypseStep != UNSET) {
             props.setProperty("lastApocalypseStep", String.valueOf(lastApocalypseStep));
+        }
+        if (stepOriginDay != UNSET) {
+            props.setProperty("stepOriginDay", String.valueOf(stepOriginDay));
         }
 
         try {

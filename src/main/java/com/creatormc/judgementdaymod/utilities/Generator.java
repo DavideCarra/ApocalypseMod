@@ -44,7 +44,7 @@ public class Generator {
     private static ApocalypsePhases.Phase lastPlayedPhase = null;
 
     // Chunk phase value marking a chunk as permanently done (apocalypse over)
-    private static final int PHASE_DONE = 999;
+    public static final int PHASE_DONE = 999;
 
     public static void handleDayEvent(ServerPlayer player) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
@@ -54,11 +54,6 @@ public class Generator {
         ServerLevel world = server.getLevel(Level.OVERWORLD);
         if (world == null)
             return;
-
-        // Destruction step reached today; frozen once the apocalypse is over
-        if (ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay) {
-            ConfigManager.lastApocalypseStep = stepForDay(ConfigManager.apocalypseCurrentDay);
-        }
 
         // Calculate which phase the current day belongs to
         int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase);
@@ -83,7 +78,7 @@ public class Generator {
             ConfigManager.minWaterEvaporationHeight = Math.max(newWaterHeight, -20);
 
             ConfigManager.save();
-            resetPlayerChunks(player);
+            resetPlayersChunks(world);
 
             // Calculate percentage for Phase
             int percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
@@ -119,7 +114,7 @@ public class Generator {
         if (ApocalypseManager.isApocalypseActive()) {
             if (ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay) {
                 if (ConfigManager.apocalypseCurrentDay % decelerateDaysPerPhase == 0) {
-                    resetPlayerChunks(player);
+                    resetPlayersChunks(world);
                 }
             } else if (ConfigManager.apocalypseCurrentDay == ConfigManager.apocalypseEndDay) {
                 PhaseTitleOverlay.displayPhaseTitle(Phase.PHASE_END.getTitleComponent(),
@@ -146,17 +141,25 @@ public class Generator {
 
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
 
-            final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
-
             // Destruction step the world has reached (see stepForDay)
             final int currentStep = currentStep();
+
+            final int day = ConfigManager.apocalypseCurrentDay;
+            final boolean over = day >= ConfigManager.apocalypseEndDay;
+            // Apocalypse progress. Once it is over the world stays as it was on its last
+            // day (the ritual rewrites apocalypseMaxDays, so it cannot be used then).
+            final float percent = over ? stepPercent(currentStep)
+                    : day >= ConfigManager.apocalypseMaxDays ? 100
+                    : Phase.toPercent(day, ConfigManager.apocalypseMaxDays);
+            final boolean evaporation = over ? currentStep >= 2
+                    : percent >= 40.0 || day >= ConfigManager.apocalypseMaxDays;
 
             ApocalypseChunkData data = ApocalypseChunkData.get(level);
             ChunkPos chunkPos = chunk.getPos();
             int savedStep = data.getPhase(chunkPos);
 
             // If apocalypse has ended, skip ALL processing
-            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay && savedStep == PHASE_DONE) {
+            if (over && savedStep == PHASE_DONE) {
                 return;
             }
 
@@ -168,7 +171,7 @@ public class Generator {
             boolean hadChanges = false;
 
             // PHASE 1: Water evaporation
-            if (percent >= 40.0 || ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays) {
+            if (evaporation) {
                 hadChanges |= evaporateWater(chunk, level, ConfigManager.minWaterEvaporationHeight,
                         level.getMaxBuildHeight(), data, currentStep);
             }
@@ -178,7 +181,7 @@ public class Generator {
             hadChanges |= transformSurface(chunk, level, percent, savedStep, currentStep);
 
             // Set phase to PHASE_DONE, to stop processing
-            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+            if (over) {
                 data.setPhase(chunkPos, PHASE_DONE);
             } else {
                 data.setPhase(chunkPos, currentStep);
@@ -573,6 +576,8 @@ public class Generator {
                                 BlockPos belowPos = pos.below();
                                 if (FallingBlock.isFree(level.getBlockState(belowPos))) {
                                     FallingBlockEntity.fall(level, pos, newState);
+                                    // The block left behind relights the area too
+                                    lightChanged = true;
                                 }
                             }
                         }
@@ -613,6 +618,8 @@ public class Generator {
     /**
      * Highest non air block of the column at or below fromY (WORLD_SURFACE rule),
      * read straight from the sections. Integer.MIN_VALUE + 1 if there is none.
+     * Used between missed steps: steps are days apart and the fire lit by a step has
+     * burned out before the next one, so fire counts as air here.
      */
     private static int highestNonAir(LevelChunkSection[] sections, int minSection, int lx, int fromY, int lz) {
         for (int y = fromY; y >= minSection << 4; y--) {
@@ -625,7 +632,8 @@ public class Generator {
                 y = ((y >> 4) << 4);
                 continue;
             }
-            if (!section.getBlockState(lx, y & 15, lz).isAir())
+            final BlockState state = section.getBlockState(lx, y & 15, lz);
+            if (!state.isAir() && !state.is(Blocks.FIRE))
                 return y;
         }
         return Integer.MIN_VALUE + 1;
@@ -655,18 +663,25 @@ public class Generator {
         // Same value as decelerateDaysPerPhase, computed from the config so that it is
         // also right while the spawn area is generated, before resetState() runs
         final int decelerate = Math.max(1, maxDays / 5) * 2;
-        return 5 + Math.floorDiv(day, decelerate) - Math.floorDiv(maxDays, decelerate);
+        // Older versions never went past step 5: a world they already took past the
+        // countdown counts the steps from the day it was first run with this version
+        // (nothing is applied retroactively)
+        final int origin = ConfigManager.stepOriginDay;
+        final int stepsFrom = origin != ConfigManager.UNSET ? Math.max(maxDays, origin) : maxDays;
+        return 5 + Math.max(0, Math.floorDiv(day, decelerate) - Math.floorDiv(stepsFrom, decelerate));
     }
 
     /**
-     * Step the world has reached: it stops growing when the apocalypse is over.
+     * Step the world has reached. It stops growing when the apocalypse is over: at the
+     * step of its last day after a natural end, at the step saved by the ritual
+     * (ConfigManager.lastApocalypseStep) when the ritual ended it.
      */
-    private static int currentStep() {
+    public static int currentStep() {
         if (ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay) {
             return stepForDay(ConfigManager.apocalypseCurrentDay);
         }
-        final int lastStep = ConfigManager.lastApocalypseStep;
-        return lastStep != ConfigManager.UNSET ? lastStep : stepForDay(ConfigManager.apocalypseEndDay - 1);
+        final int ritualStep = ConfigManager.lastApocalypseStep;
+        return ritualStep != ConfigManager.UNSET ? ritualStep : stepForDay(ConfigManager.apocalypseEndDay - 1);
     }
 
     /**
@@ -728,27 +743,25 @@ public class Generator {
     }
 
     /**
-     * Reset all chunks already watched
-     * Used when entering a new apocalypse phase
+     * Reset the chunks around every player in the overworld (each chunk once)
+     * Used when entering a new apocalypse phase or destruction step.
+     * Only loaded chunks are queued: loading the others here froze the server for
+     * seconds, and they catch up on every missed step as soon as a player sees them.
      */
-    public static void resetPlayerChunks(ServerPlayer player) {
-        if (player == null || player.hasDisconnected())
-            return;
-
-        ServerLevel level = player.serverLevel();
-        ChunkPos playerPos = new ChunkPos(player.blockPosition());
-        int viewDistance = level.getServer().getPlayerList().getViewDistance() + 1;
-
-        // Queue all loaded chunks around the player for reprocessing. Chunks that are not
-        // loaded are not loaded here (that froze the server for seconds): they catch up
-        // on every missed step as soon as a player sees them.
-        for (int dx = -viewDistance; dx <= viewDistance; dx++) {
-            for (int dz = -viewDistance; dz <= viewDistance; dz++) {
-                int cx = playerPos.x + dx;
-                int cz = playerPos.z + dz;
-                if (level.hasChunk(cx, cz)) {
-                    ChunkToProcess task = new ChunkToProcess(level, cx, cz);
-                    DayTracker.enqueueChunk(task);
+    public static void resetPlayersChunks(ServerLevel overworld) {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet queued = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        int viewDistance = overworld.getServer().getPlayerList().getViewDistance() + 1;
+        for (ServerPlayer player : overworld.players()) {
+            if (player.hasDisconnected())
+                continue;
+            ChunkPos playerPos = new ChunkPos(player.blockPosition());
+            for (int dx = -viewDistance; dx <= viewDistance; dx++) {
+                for (int dz = -viewDistance; dz <= viewDistance; dz++) {
+                    int cx = playerPos.x + dx;
+                    int cz = playerPos.z + dz;
+                    if (queued.add(ChunkPos.asLong(cx, cz)) && overworld.hasChunk(cx, cz)) {
+                        DayTracker.enqueueChunk(new ChunkToProcess(overworld, cx, cz));
+                    }
                 }
             }
         }
@@ -794,10 +807,23 @@ public class Generator {
             ConfigManager.lastAppliedPhase = day > 0 ? phaseOfDay : -1;
         }
 
+        // The step saved by the ritual only means something once the apocalypse is over
+        // (e.g. it is left over from an apocalypse played in another world)
         if (day < ConfigManager.apocalypseEndDay) {
-            ConfigManager.lastApocalypseStep = stepForDay(day);
-        } else if (ConfigManager.lastApocalypseStep == ConfigManager.UNSET) {
-            ConfigManager.lastApocalypseStep = stepForDay(ConfigManager.apocalypseEndDay - 1);
+            ConfigManager.lastApocalypseStep = ConfigManager.UNSET;
+        }
+
+        // A config written by an older version past the countdown: its chunks stopped at
+        // step 5, count the later steps from today. A new countdown has no origin.
+        if (day < ConfigManager.apocalypseMaxDays) {
+            ConfigManager.stepOriginDay = ConfigManager.UNSET;
+        } else if (ConfigManager.legacyConfig && ConfigManager.stepOriginDay == ConfigManager.UNSET) {
+            ConfigManager.stepOriginDay = day;
+        }
+        if (ConfigManager.legacyConfig) {
+            // Write the new values now, so the next start does not take it for an old config
+            ConfigManager.legacyConfig = false;
+            ConfigManager.save();
         }
 
         JudgementDayMod.LOGGER.info("[Apocalypse] Generator state reset (daysPerPhase=" + daysPerPhase + ")");

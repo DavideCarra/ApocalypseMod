@@ -187,6 +187,13 @@ public class ApocalypseDamageHandler {
         }
     }
 
+    /**
+     * Forgets the heat of an entity that will never come back.
+     */
+    public static void forget(UUID id) {
+        heatLevels.remove(id);
+    }
+
     @SubscribeEvent
     public static void onEntityDeath(LivingDeathEvent event) {
         LivingEntity entity = event.getEntity();

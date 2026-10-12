@@ -9,7 +9,9 @@
         "ChunkGeneratorAccessor",
         "ServerChunkCacheAccessor",
         "ChunkMapAccessor",
-        "ChunkHolderMixin"
+        "ChunkHolderMixin",
+        "BeehiveDecoratorMixin",
+        "MobMixin"
     ],
     "injectors": {
         "defaultRequire": 1
