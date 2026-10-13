@@ -265,7 +265,6 @@ public class Generator {
                         && currentStep <= data.getPhase(targetChunk.getPos());
                 boolean chunkChanged = false;
                 final LightChecks lightChecks = new LightChecks(level, targetChunkX, targetChunkZ, false);
-                Heightmap[] heightmaps = null;
 
                 // Iterate ONLY over sections that contain water
                 for (int i = 0; i < sectionsWithWaterCount; i++) {
@@ -345,14 +344,6 @@ public class Generator {
                                     level.getChunkSource().blockChanged(mutablePos);
                                 }
 
-                                // Heightmaps follow the change, as LevelChunk#setBlockState does
-                                if (heightmaps == null) {
-                                    heightmaps = heightmaps(targetChunk);
-                                }
-                                for (Heightmap heightmap : heightmaps) {
-                                    heightmap.update(localX, worldY, localZ, airState);
-                                }
-
                                 // Light management (checks queued below, all at once)
                                 if (LightEngine.hasDifferentLightProperties(targetChunk, mutablePos, oldState,
                                         airState)) {
@@ -375,6 +366,11 @@ public class Generator {
                 // Mark chunk for saving if modified
                 if (hadChanges) {
                     targetChunk.setUnsaved(true);
+                    // Heightmaps only need rebuilding if a block of THIS chunk changed:
+                    // on an untouched chunk they are already exact and priming is a no-op
+                    if (chunkChanged) {
+                        Heightmap.primeHeightmaps(targetChunk, targetChunk.getStatus().heightmapsAfter());
+                    }
                 }
 
                 // Light checks of this chunk: queued, then forwarded to clients once computed
@@ -438,8 +434,6 @@ public class Generator {
 
         // Cache heightmap for fast surface access
         final Heightmap wsHM = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
-        // Heightmaps follow every change, as LevelChunk#setBlockState does
-        final Heightmap[] heightmaps = heightmaps(chunk);
 
         // Single pass over all columns
         for (int lx = 0; lx < 16; lx++) {
@@ -558,9 +552,6 @@ public class Generator {
                             targetSection.setBlockState(lx, finalLy, lz, newState, false);
                             dirtySection[finalSecIndex] = true;
                             hadChanges = true;
-                            for (Heightmap heightmap : heightmaps) {
-                                heightmap.update(lx, targetY, lz, newState);
-                            }
 
                             // Light management (e.g. water or snow gone, ash in place of a slab)
                             if (newBlock != fireBlock
@@ -612,9 +603,10 @@ public class Generator {
             }
         }
 
-        // Save the chunk if there were changes
+        // Update heightmaps if there were changes
         if (hadChanges) {
             chunk.setUnsaved(true);
+            Heightmap.primeHeightmaps(chunk, chunk.getStatus().heightmapsAfter());
         }
 
         // Light checks queued: forward the final light to clients once computed
@@ -648,21 +640,6 @@ public class Generator {
                 return y;
         }
         return Integer.MIN_VALUE + 1;
-    }
-
-    /**
-     * The heightmaps of the chunk, kept up to date block by block while editing its
-     * sections (the same updates LevelChunk#setBlockState makes). Rebuilding them from
-     * scratch afterwards gives the same result but scans every column of the chunk.
-     */
-    private static Heightmap[] heightmaps(LevelChunk chunk) {
-        final java.util.Set<Heightmap.Types> types = chunk.getStatus().heightmapsAfter();
-        final Heightmap[] maps = new Heightmap[types.size()];
-        int i = 0;
-        for (Heightmap.Types type : types) {
-            maps[i++] = chunk.getOrCreateHeightmapUnprimed(type);
-        }
-        return maps;
     }
 
     /**
