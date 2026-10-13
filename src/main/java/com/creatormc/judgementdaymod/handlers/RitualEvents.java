@@ -3,6 +3,7 @@ package com.creatormc.judgementdaymod.handlers;
 import com.creatormc.judgementdaymod.setup.ModItems;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
+import com.creatormc.judgementdaymod.utilities.Generator;
 import com.creatormc.judgementdaymod.setup.ModBlocks;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 
@@ -64,9 +65,9 @@ public class RitualEvents {
                     pos.getY() + 1.0, // slightly above the grass
                     pos.getZ() + 0.5,
                     new ItemStack(ModItems.HEART_OF_OBLIVION.get()));
+            // Part of the ritual, not a drop: it must not be picked back up
+            heartEntity.setNeverPickUp();
             serverLevel.addFreshEntity(heartEntity);
-
-            System.out.println("SPAWN HEART ENTITY: " + heartEntity);
 
             // Call your epic ritual logic
             ServerPlayer player = entity instanceof ServerPlayer sp ? sp : null;
@@ -395,6 +396,8 @@ public class RitualEvents {
             }));
 
             if (player != null) {
+                // The world stays as it is now: save the destruction step reached
+                ConfigManager.lastApocalypseStep = Generator.currentStep();
                 ConfigManager.apocalypseEndDay = ConfigManager.apocalypseCurrentDay;
                 if (ConfigManager.apocalypseMaxDays >= ConfigManager.apocalypseCurrentDay) {
                     ConfigManager.apocalypseMaxDays = ConfigManager.apocalypseCurrentDay - 1;

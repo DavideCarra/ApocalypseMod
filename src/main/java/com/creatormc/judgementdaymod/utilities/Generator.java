@@ -1,6 +1,5 @@
 package com.creatormc.judgementdaymod.utilities;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -24,7 +23,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.ChunkPos;
@@ -40,11 +38,13 @@ import net.minecraft.world.level.lighting.LightEngine;
 import net.minecraft.world.level.material.Fluids;
 
 public class Generator {
-    // Calculates days per phase (divides maxDays into 5 phases of 20% each)
-    private static int daysPerPhase = ConfigManager.apocalypseMaxDays / 5;
-    private static int previousDay = 0 - daysPerPhase; // day 0 minus one phase to give player time to start
+    // Calculates days per phase (divides maxDays into 5 phases of 20% each), at least 1 day
+    private static int daysPerPhase = Math.max(1, ConfigManager.apocalypseMaxDays / 5);
     private static int decelerateDaysPerPhase = daysPerPhase * 2; // decelerate phase frequency: double duration
     private static ApocalypsePhases.Phase lastPlayedPhase = null;
+
+    // Chunk phase value marking a chunk as permanently done (apocalypse over)
+    public static final int PHASE_DONE = 999;
 
     public static void handleDayEvent(ServerPlayer player) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
@@ -57,13 +57,13 @@ public class Generator {
 
         // Calculate which phase the current day belongs to
         int currentPhaseNumber = Math.floorDiv(ConfigManager.apocalypseCurrentDay, daysPerPhase);
-        int previousPhaseNumber = Math.floorDiv(previousDay, daysPerPhase);
 
-        // Check if we have entered a new phase
-        if (currentPhaseNumber > previousPhaseNumber
+        // Check if we have entered a new phase (the last applied one is saved, so a
+        // restart never applies the same phase twice)
+        if (currentPhaseNumber > ConfigManager.lastAppliedPhase
                 && ConfigManager.apocalypseCurrentDay <= ConfigManager.apocalypseMaxDays) {
 
-            previousDay = ConfigManager.apocalypseCurrentDay;
+            ConfigManager.lastAppliedPhase = currentPhaseNumber;
 
             // Current damage and water heights
             int baseDamageHeight = ConfigManager.minDamageHeight;
@@ -78,7 +78,7 @@ public class Generator {
             ConfigManager.minWaterEvaporationHeight = Math.max(newWaterHeight, -20);
 
             ConfigManager.save();
-            resetPlayerChunks(player);
+            resetPlayersChunks(world);
 
             // Calculate percentage for Phase
             int percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
@@ -114,7 +114,7 @@ public class Generator {
         if (ApocalypseManager.isApocalypseActive()) {
             if (ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay) {
                 if (ConfigManager.apocalypseCurrentDay % decelerateDaysPerPhase == 0) {
-                    resetPlayerChunks(player);
+                    resetPlayersChunks(world);
                 }
             } else if (ConfigManager.apocalypseCurrentDay == ConfigManager.apocalypseEndDay) {
                 PhaseTitleOverlay.displayPhaseTitle(Phase.PHASE_END.getTitleComponent(),
@@ -141,48 +141,54 @@ public class Generator {
 
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
 
-            // Calculate current phase number (0-4)
-            final float percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
+            // Destruction step the world has reached (see stepForDay)
+            final int currentStep = currentStep();
 
-            int currentPhaseNumber = Math.min(5, (int) (percent / 20.0f));
+            final int day = ConfigManager.apocalypseCurrentDay;
+            final boolean over = day >= ConfigManager.apocalypseEndDay;
+            // Apocalypse progress. Once it is over the world stays as it was on its last
+            // day (the ritual rewrites apocalypseMaxDays, so it cannot be used then).
+            final float percent = over ? stepPercent(currentStep)
+                    : day >= ConfigManager.apocalypseMaxDays ? 100
+                    : Phase.toPercent(day, ConfigManager.apocalypseMaxDays);
+            final boolean evaporation = over ? currentStep >= 2
+                    : percent >= 40.0 || day >= ConfigManager.apocalypseMaxDays;
 
             ApocalypseChunkData data = ApocalypseChunkData.get(level);
             ChunkPos chunkPos = chunk.getPos();
-            int savedPhase = data.getPhase(chunkPos);
+            int savedStep = data.getPhase(chunkPos);
 
             // If apocalypse has ended, skip ALL processing
-            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay && savedPhase == 999) {
-                // Mark as permanently completed (use a special value like 999)
+            if (over && savedStep == PHASE_DONE) {
                 return;
             }
 
-            // Skip if already processed for this phase or later
-            if (currentPhaseNumber <= savedPhase) {
+            // Skip if already processed for this step or later
+            if (currentStep <= savedStep) {
                 return;
             }
-
 
             boolean hadChanges = false;
 
             // PHASE 1: Water evaporation
-            if (percent >= 40.0 || ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays) {
+            if (evaporation) {
                 hadChanges |= evaporateWater(chunk, level, ConfigManager.minWaterEvaporationHeight,
-                        level.getMaxBuildHeight());
+                        level.getMaxBuildHeight(), data, currentStep);
             }
 
-            // PHASE 2: Surface transformation
-            hadChanges |= transformSurface(chunk, level, percent);
+            // PHASE 2: Surface transformation, once for every step the chunk missed
+            // (e.g. while nobody was near it), so it ends up like the rest of the world
+            hadChanges |= transformSurface(chunk, level, percent, savedStep, currentStep);
 
-            // Set phase to 999, to stop processing
-            if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
-                data.setPhase(chunkPos, 999);
+            // Set phase to PHASE_DONE, to stop processing
+            if (over) {
+                data.setPhase(chunkPos, PHASE_DONE);
             } else {
-                // Update phase (0-4 are valid phases, 5+ means "max apocalypse reached")
-                data.setPhase(chunkPos, Math.min(currentPhaseNumber, 5));
+                data.setPhase(chunkPos, currentStep);
             }
 
-            // PHASE 3: Update clients
-            if (hadChanges) {
+            // PHASE 3: Update clients (once the light around the chunk is computed, if any)
+            if (hadChanges && !ChunkLightSync.resendWhenLit(chunk)) {
                 updateClients(chunk, level);
             }
 
@@ -196,8 +202,13 @@ public class Generator {
      * WATER EVAPORATION
      * Removes water blocks efficiently using direct section access.
      * Water above solid ground becomes fire, water above water becomes air.
+     *
+     * @param data        chunk phase data, used to know which neighbours
+     *                    will not be processed (and re-sent) again
+     * @param currentStep step the center chunk is being processed for
      */
-    private static boolean evaporateWater(LevelChunk chunk, ServerLevel level, int minBuildHeight, int maxBuildHeight) {
+    private static boolean evaporateWater(LevelChunk chunk, ServerLevel level, int minBuildHeight, int maxBuildHeight,
+            ApocalypseChunkData data, int currentStep) {
         final BlockState airState = Blocks.AIR.defaultBlockState();
 
         final int chunkX = chunk.getPos().x;
@@ -227,7 +238,9 @@ public class Generator {
                 final int minSecIndex = Math.max(0, (minBuildHeight >> 4) - minSection);
                 final int maxSecIndex = Math.min(sections.length - 1, (maxBuildHeight >> 4) - minSection);
 
-                List<Integer> sectionsWithWater = new ArrayList<>();
+                // Indices of the sections that may contain water, top to bottom
+                final int[] sectionsWithWater = new int[sections.length];
+                int sectionsWithWaterCount = 0;
                 for (int secIndex = maxSecIndex; secIndex >= minSecIndex; secIndex--) {
                     final LevelChunkSection section = sections[secIndex];
 
@@ -236,16 +249,26 @@ public class Generator {
 
                     // Fast check: does this section contain water?
                     if (section.maybeHas(isEvaporable)) {
-                        sectionsWithWater.add(secIndex);
+                        sectionsWithWater[sectionsWithWaterCount++] = secIndex;
                     }
                 }
 
                 // If no section has water, skip this chunk entirely
-                if (sectionsWithWater.isEmpty())
+                if (sectionsWithWaterCount == 0)
                     continue;
 
+                // A neighbour already processed for this phase is never re-sent, so the
+                // water removed here (e.g. water that flowed back in from a chunk processed
+                // later) must be sent to clients block by block, otherwise they keep seeing
+                // "ghost" water walls that do not exist on the server.
+                final boolean notifyClients = (offsetX != 0 || offsetZ != 0)
+                        && currentStep <= data.getPhase(targetChunk.getPos());
+                boolean chunkChanged = false;
+                final LightChecks lightChecks = new LightChecks(level, targetChunkX, targetChunkZ, false);
+
                 // Iterate ONLY over sections that contain water
-                for (int secIndex : sectionsWithWater) {
+                for (int i = 0; i < sectionsWithWaterCount; i++) {
+                    final int secIndex = sectionsWithWater[i];
                     final LevelChunkSection section = sections[secIndex];
 
                     if (section == null || section.hasOnlyAir())
@@ -253,6 +276,11 @@ public class Generator {
 
                     final int sectionWorldY = (secIndex + minSection) << 4;
                     boolean sectionModified = false;
+
+                    // isEvaporable is a pure function of the state and a section holds long
+                    // runs of the same state: remember the last answer
+                    BlockState lastState = null;
+                    boolean lastEvaporable = false;
 
                     // Process blocks within this section (Y: 15 → 0)
                     for (int ly = 15; ly >= 0; ly--) {
@@ -270,7 +298,11 @@ public class Generator {
                             for (int lz = 0; lz < 16; lz++) {
                                 final BlockState state = section.getBlockState(lx, ly, lz);
 
-                                if (!Analyzer.isEvaporable(state))
+                                if (state != lastState) {
+                                    lastState = state;
+                                    lastEvaporable = Analyzer.isEvaporable(state);
+                                }
+                                if (!lastEvaporable)
                                     continue;
 
                                 // Validity controls
@@ -285,6 +317,12 @@ public class Generator {
                                 int localX = mutablePos.getX() & 15;
                                 int localY = worldY & 15;
                                 int localZ = mutablePos.getZ() & 15;
+
+                                // The block is replaced without the usual block callbacks: drop its
+                                // block entity too (e.g. waterlogged chests), or it stays orphaned
+                                if (state.hasBlockEntity()) {
+                                    removeBlockEntity(targetChunk, mutablePos.immutable());
+                                }
 
                                 // Previous block state
                                 BlockState oldState = section.setBlockState(localX, localY, localZ, airState);
@@ -301,15 +339,16 @@ public class Generator {
                                     continue; // No actual change
                                 }
 
-                                // Light management
+                                chunkChanged = true;
+                                if (notifyClients) {
+                                    level.getChunkSource().blockChanged(mutablePos);
+                                }
+
+                                // Light management (checks queued below, all at once)
                                 if (LightEngine.hasDifferentLightProperties(targetChunk, mutablePos, oldState,
                                         airState)) {
-                                    ProfilerFiller profiler = level.getProfiler();
-                                    profiler.push("updateSkyLightSources");
                                     targetChunk.getSkyLightSources().update(targetChunk, localX, worldY, localZ);
-                                    profiler.popPush("queueCheckLight");
-                                    level.getChunkSource().getLightEngine().checkBlock(mutablePos);
-                                    profiler.pop();
+                                    lightChecks.add(mutablePos);
                                 }
 
                             }
@@ -327,7 +366,16 @@ public class Generator {
                 // Mark chunk for saving if modified
                 if (hadChanges) {
                     targetChunk.setUnsaved(true);
-                    Heightmap.primeHeightmaps(targetChunk, targetChunk.getStatus().heightmapsAfter());
+                    // Heightmaps only need rebuilding if a block of THIS chunk changed:
+                    // on an untouched chunk they are already exact and priming is a no-op
+                    if (chunkChanged) {
+                        Heightmap.primeHeightmaps(targetChunk, targetChunk.getStatus().heightmapsAfter());
+                    }
+                }
+
+                // Light checks of this chunk: queued, then forwarded to clients once computed
+                if (lightChecks.submit()) {
+                    ChunkLightSync.lightQueued(level, targetChunkX, targetChunkZ);
                 }
             }
         }
@@ -337,9 +385,15 @@ public class Generator {
 
     /**
      * SURFACE TRANSFORMATION
-     * Converts surface blocks to ash, fire, or air based on apocalypse progress
+     * Converts surface blocks to ash, fire, or air based on apocalypse progress.
+     *
+     * Every step after savedStep up to currentStep is applied: a column can be
+     * transformed once per step, with the chance of that step (the chance of the
+     * current progress for the last one). A chunk processed on time only misses the
+     * current step, so this is a single pass, exactly as before.
      */
-    private static boolean transformSurface(LevelChunk chunk, ServerLevel level, float percent) {
+    private static boolean transformSurface(LevelChunk chunk, ServerLevel level, float percent, int savedStep,
+            int currentStep) {
         final LevelChunkSection[] sections = chunk.getSections();
         final int startX = chunk.getPos().x << 4;
         final int startZ = chunk.getPos().z << 4;
@@ -357,11 +411,26 @@ public class Generator {
 
         // ThreadLocalRandom is faster for single-threaded operations
         final ThreadLocalRandom random = ThreadLocalRandom.current();
-        final float apocalypseThreshold = percent / 100f;
+
+        // Chance of every step to apply, oldest first
+        final int firstStep = Math.max(savedStep + 1, 0);
+        final int stepCount = currentStep - firstStep + 1;
+        final float[] thresholds = new float[Math.max(stepCount, 0)];
+        for (int i = 0; i < thresholds.length; i++) {
+            final int step = firstStep + i;
+            thresholds[i] = step == currentStep ? percent / 100f : stepPercent(step) / 100f;
+        }
 
         // Track which sections were modified
         final boolean[] dirtySection = new boolean[sectionsCount];
         boolean hadChanges = false;
+        // Sky light checks of the changed blocks (shadows), queued below all at once.
+        // The block light is left as it always was (the fires lit here do not glow), and so
+        // is the light around those fires: they burn out within moments and vanilla checks
+        // their spot then, checking them now too would only double that light work.
+        final LightChecks lightChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, true);
+        // A falling block left air behind: vanilla queued its light check
+        boolean blockFell = false;
 
         // Cache heightmap for fast surface access
         final Heightmap wsHM = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
@@ -369,119 +438,149 @@ public class Generator {
         // Single pass over all columns
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
-                // Random transformation based on apocalypse progress
-                if (random.nextFloat() > apocalypseThreshold)
-                    continue;
+                // Highest non air block of the column, read from the heightmap for the first
+                // step only: later steps follow the column themselves (see highestNonAir)
+                int topY = Integer.MIN_VALUE;
 
-                int topY = wsHM.getFirstAvailable(lx, lz) - 1;
-                if (topY < minBuildHeight)
-                    continue;
+                for (int stepIndex = 0; stepIndex < thresholds.length; stepIndex++) {
+                    final float apocalypseThreshold = thresholds[stepIndex];
 
-                int secIndex = (topY >> 4) - minSection;
-                if (secIndex < 0 || secIndex >= sectionsCount)
-                    continue;
-
-                LevelChunkSection section = sections[secIndex];
-                if (section == null)
-                    continue;
-
-                int ly = topY & 15;
-                BlockState currentBlock = section.getBlockState(lx, ly, lz);
-
-                BlockState newState = ashState;
-                Block newBlock = ashBlock;
-                int targetY = topY;
-
-                // If current block is skippable (ash/air), find first solid block below
-                if (Analyzer.isSkippable(currentBlock)) {
-                    boolean foundSolid = false;
-
-                    for (int y = topY - 1; y > minBuildHeight; y--) {
-                        final int checkSecIndex = (y >> 4) - minSection;
-                        if (checkSecIndex < 0 || checkSecIndex >= sectionsCount)
-                            break;
-
-                        final LevelChunkSection checkSection = sections[checkSecIndex];
-                        if (checkSection == null || checkSection.hasOnlyAir())
-                            continue;
-
-                        final int checkLy = y & 15;
-                        BlockState foundBlock = checkSection.getBlockState(lx, checkLy, lz);
-
-                        if (foundBlock.isAir())
-                            continue;
-
-                        if (!Analyzer.isSkippable(foundBlock)) {
-                            targetY = y;
-                            foundSolid = true;
-
-                            // Determine transformation type
-                            if (Analyzer.canBurn(foundBlock, null, null)) {
-                                newState = fireState;
-                                newBlock = fireBlock;
-                            } else if (Analyzer.isEvaporable(foundBlock)) {
-                                newState = airState;
-                                newBlock = null;
-                            } else {
-                                newState = ashState;
-                                newBlock = ashBlock;
-                            }
-                            break;
-                        }
-                    }
-
-                    if (!foundSolid)
+                    // A step that cannot apply (0%) is skipped without drawing
+                    if (stepIndex < thresholds.length - 1 && apocalypseThreshold <= 0f)
                         continue;
 
-                } else {
-                    // Current block is solid, transform it directly
-                    if (Analyzer.canBurn(currentBlock, null, null)) {
-                        newState = fireState;
-                        newBlock = fireBlock;
-                    } else if (Analyzer.isEvaporable(currentBlock)) {
-                        newState = airState;
-                        newBlock = null;
+                    // Random transformation based on apocalypse progress
+                    if (random.nextFloat() > apocalypseThreshold)
+                        continue;
+
+                    if (topY == Integer.MIN_VALUE) {
+                        topY = wsHM.getFirstAvailable(lx, lz) - 1;
                     } else {
-                        newState = ashState;
-                        newBlock = ashBlock;
+                        topY = highestNonAir(sections, minSection, lx, topY, lz);
                     }
-                }
+                    if (topY < minBuildHeight)
+                        break;
 
-                // Apply transformation
-                int finalSecIndex = (targetY >> 4) - minSection;
-                if (finalSecIndex >= 0 && finalSecIndex < sectionsCount) {
-                    LevelChunkSection targetSection = sections[finalSecIndex];
-                    if (targetSection != null) {
-                        int finalLy = targetY & 15;
+                    int secIndex = (topY >> 4) - minSection;
+                    if (secIndex < 0 || secIndex >= sectionsCount)
+                        break;
 
-                        // Save old state BEFORE changing it
-                        BlockState oldState = targetSection.getBlockState(lx, finalLy, lz);
+                    LevelChunkSection section = sections[secIndex];
+                    if (section == null)
+                        break;
 
-                        targetSection.setBlockState(lx, finalLy, lz, newState, false);
-                        dirtySection[finalSecIndex] = true;
-                        hadChanges = true;
+                    int ly = topY & 15;
+                    BlockState currentBlock = section.getBlockState(lx, ly, lz);
 
-                        BlockPos pos = new BlockPos(startX + lx, targetY, startZ + lz);
+                    BlockState newState = ashState;
+                    Block newBlock = ashBlock;
+                    int targetY = topY;
 
-                        // Schedule ticks inline
-                        if (newBlock == ashBlock) {
-                            level.scheduleTick(pos, ashBlock, 1);
-                        } else if (newBlock == fireBlock) {
-                            level.scheduleTick(pos, fireBlock, 1);
-                        } else if (newBlock == null && Analyzer.isEvaporable(oldState)) {
-                            // Add neighbors to set instead of immediate check
-                            waterNeighborsToUpdate.add(pos.north());
-                            waterNeighborsToUpdate.add(pos.south());
-                            waterNeighborsToUpdate.add(pos.east());
-                            waterNeighborsToUpdate.add(pos.west());
-                            waterNeighborsToUpdate.add(pos.above());
-                            waterNeighborsToUpdate.add(pos.below());
+                    // If current block is skippable (ash/air), find first solid block below
+                    if (Analyzer.isSkippable(currentBlock)) {
+                        boolean foundSolid = false;
+
+                        for (int y = topY - 1; y > minBuildHeight; y--) {
+                            final int checkSecIndex = (y >> 4) - minSection;
+                            if (checkSecIndex < 0 || checkSecIndex >= sectionsCount)
+                                break;
+
+                            final LevelChunkSection checkSection = sections[checkSecIndex];
+                            if (checkSection == null || checkSection.hasOnlyAir())
+                                continue;
+
+                            final int checkLy = y & 15;
+                            BlockState foundBlock = checkSection.getBlockState(lx, checkLy, lz);
+
+                            if (foundBlock.isAir())
+                                continue;
+
+                            if (!Analyzer.isSkippable(foundBlock)) {
+                                targetY = y;
+                                foundSolid = true;
+
+                                // Determine transformation type
+                                if (Analyzer.canBurn(foundBlock, null, null)) {
+                                    newState = fireState;
+                                    newBlock = fireBlock;
+                                } else if (Analyzer.isEvaporable(foundBlock)) {
+                                    newState = airState;
+                                    newBlock = null;
+                                } else {
+                                    newState = ashState;
+                                    newBlock = ashBlock;
+                                }
+                                break;
+                            }
                         }
-                        // Handle falling blocks
-                        if (newState.getBlock() instanceof FallingBlock) {
-                            BlockPos belowPos = pos.below();
-                            if (FallingBlock.isFree(level.getBlockState(belowPos))) {
-                                FallingBlockEntity.fall(level, pos, newState);
+
+                        if (!foundSolid)
+                            continue;
+
+                    } else {
+                        // Current block is solid, transform it directly
+                        if (Analyzer.canBurn(currentBlock, null, null)) {
+                            newState = fireState;
+                            newBlock = fireBlock;
+                        } else if (Analyzer.isEvaporable(currentBlock)) {
+                            newState = airState;
+                            newBlock = null;
+                        } else {
+                            newState = ashState;
+                            newBlock = ashBlock;
+                        }
+                    }
+
+                    // Apply transformation
+                    int finalSecIndex = (targetY >> 4) - minSection;
+                    if (finalSecIndex >= 0 && finalSecIndex < sectionsCount) {
+                        LevelChunkSection targetSection = sections[finalSecIndex];
+                        if (targetSection != null) {
+                            int finalLy = targetY & 15;
+
+                            // Save old state BEFORE changing it
+                            BlockState oldState = targetSection.getBlockState(lx, finalLy, lz);
+
+                            BlockPos pos = new BlockPos(startX + lx, targetY, startZ + lz);
+
+                            // The block is replaced without the usual block callbacks: drop its
+                            // block entity too, or it would stay orphaned in the chunk
+                            if (oldState.hasBlockEntity()) {
+                                removeBlockEntity(chunk, pos);
+                            }
+
+                            targetSection.setBlockState(lx, finalLy, lz, newState, false);
+                            dirtySection[finalSecIndex] = true;
+                            hadChanges = true;
+
+                            // Light management (e.g. water or snow gone, ash in place of a slab)
+                            if (newBlock != fireBlock
+                                    && LightEngine.hasDifferentLightProperties(chunk, pos, oldState, newState)) {
+                                chunk.getSkyLightSources().update(chunk, lx, targetY, lz);
+                                lightChecks.add(pos);
+                            }
+
+                            // Schedule ticks inline
+                            if (newBlock == ashBlock) {
+                                level.scheduleTick(pos, ashBlock, 1);
+                            } else if (newBlock == fireBlock) {
+                                level.scheduleTick(pos, fireBlock, 1);
+                            } else if (newBlock == null && Analyzer.isEvaporable(oldState)) {
+                                // Add neighbors to set instead of immediate check
+                                waterNeighborsToUpdate.add(pos.north());
+                                waterNeighborsToUpdate.add(pos.south());
+                                waterNeighborsToUpdate.add(pos.east());
+                                waterNeighborsToUpdate.add(pos.west());
+                                waterNeighborsToUpdate.add(pos.above());
+                                waterNeighborsToUpdate.add(pos.below());
+                            }
+                            // Handle falling blocks
+                            if (newState.getBlock() instanceof FallingBlock) {
+                                BlockPos belowPos = pos.below();
+                                if (FallingBlock.isFree(level.getBlockState(belowPos))) {
+                                    FallingBlockEntity.fall(level, pos, newState);
+                                    blockFell = true;
+                                }
                             }
                         }
                     }
@@ -510,15 +609,126 @@ public class Generator {
             Heightmap.primeHeightmaps(chunk, chunk.getStatus().heightmapsAfter());
         }
 
+        // Light checks queued: forward the final light to clients once computed
+        final boolean lightQueued = lightChecks.submit();
+        if (lightQueued || blockFell) {
+            ChunkLightSync.lightQueued(level, chunk.getPos().x, chunk.getPos().z);
+        }
+
         return hadChanges;
+    }
+
+    /**
+     * Highest non air block of the column at or below fromY (WORLD_SURFACE rule),
+     * read straight from the sections. Integer.MIN_VALUE + 1 if there is none.
+     * Used between missed steps: steps are days apart and the fire lit by a step has
+     * burned out before the next one, so fire counts as air here.
+     */
+    private static int highestNonAir(LevelChunkSection[] sections, int minSection, int lx, int fromY, int lz) {
+        for (int y = fromY; y >= minSection << 4; y--) {
+            final int secIndex = (y >> 4) - minSection;
+            if (secIndex >= sections.length)
+                continue;
+            final LevelChunkSection section = sections[secIndex];
+            if (section == null || section.hasOnlyAir()) {
+                // Jump to the top of the section below
+                y = ((y >> 4) << 4);
+                continue;
+            }
+            final BlockState state = section.getBlockState(lx, y & 15, lz);
+            if (!state.isAir() && !state.is(Blocks.FIRE))
+                return y;
+        }
+        return Integer.MIN_VALUE + 1;
+    }
+
+    /**
+     * Removes the block entity at pos (also one still waiting to be loaded).
+     */
+    private static void removeBlockEntity(LevelChunk chunk, BlockPos pos) {
+        // Loads a pending block entity, if any, so that it is removed as well
+        chunk.getBlockEntity(pos);
+        chunk.removeBlockEntity(pos);
+    }
+
+    /**
+     * DESTRUCTION STEPS
+     * Step 0-5: one per apocalypse phase (as the chunk phase was before).
+     * Step 6+: once the apocalypse is active, one more every decelerateDaysPerPhase
+     * days, on the same days the visible chunks are reset (ash goes one block deeper).
+     */
+    static int stepForDay(int day) {
+        final int maxDays = ConfigManager.apocalypseMaxDays;
+        if (day < maxDays) {
+            final float percent = Phase.toPercent(day, maxDays);
+            return Math.min(5, (int) (percent / 20.0f));
+        }
+        // Same value as decelerateDaysPerPhase, computed from the config so that it is
+        // also right while the spawn area is generated, before resetState() runs
+        final int decelerate = Math.max(1, maxDays / 5) * 2;
+        // Older versions never went past step 5: a world they already took past the
+        // countdown counts the steps from the day it was first run with this version
+        // (nothing is applied retroactively)
+        final int origin = ConfigManager.stepOriginDay;
+        final int stepsFrom = origin != ConfigManager.UNSET ? Math.max(maxDays, origin) : maxDays;
+        return 5 + Math.max(0, Math.floorDiv(day, decelerate) - Math.floorDiv(stepsFrom, decelerate));
+    }
+
+    /**
+     * Step the world has reached. It stops growing when the apocalypse is over: at the
+     * step of its last day after a natural end, at the step saved by the ritual
+     * (ConfigManager.lastApocalypseStep) when the ritual ended it.
+     */
+    public static int currentStep() {
+        if (ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay) {
+            return stepForDay(ConfigManager.apocalypseCurrentDay);
+        }
+        final int ritualStep = ConfigManager.lastApocalypseStep;
+        return ritualStep != ConfigManager.UNSET ? ritualStep : stepForDay(ConfigManager.apocalypseEndDay - 1);
+    }
+
+    /**
+     * Step to record for a chunk being generated. Without the apocalypse the chunk is
+     * untouched (0) and catches up on every step. During the apocalypse it is generated
+     * with three layers of ash, about what the five phases do to the rest of the world:
+     * it gets one pass for the current phase, as before, or only the steps after the
+     * phases once the apocalypse has gone past them.
+     * Called from world generation threads.
+     */
+    public static int stepForNewChunk() {
+        if (!ConfigManager.apocalypseActive) {
+            return 0;
+        }
+        final int step = currentStep();
+        return step <= 5 ? Math.max(0, step - 1) : 5;
+    }
+
+    /**
+     * True if a chunk with this saved step has missed at least one step the world went
+     * through (unknown chunks, -1, are not considered).
+     */
+    public static boolean missedSteps(int savedStep) {
+        return savedStep >= 0 && savedStep != PHASE_DONE && savedStep < currentStep();
+    }
+
+    /**
+     * Apocalypse percent at which a past step was applied to the chunks in view.
+     */
+    private static int stepPercent(int step) {
+        return Math.min(100, Math.max(0, step) * 20);
     }
 
     /**
      * UPDATE CLIENTS
      * Sends chunk update to clients
      */
-    private static void updateClients(LevelChunk chunk, ServerLevel level) {
+    static void updateClients(LevelChunk chunk, ServerLevel level) {
         final ChunkPos chunkPos = chunk.getPos();
+
+        // Players currently viewing this chunk
+        final List<ServerPlayer> viewers = level.getChunkSource().chunkMap.getPlayers(chunkPos, false);
+        if (viewers.isEmpty())
+            return;
 
         // Refresh entire chunk for client updates
         ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(chunk,
@@ -529,10 +739,10 @@ public class Generator {
 
         for (ServerPlayer viewer : level.players()) {
             // Send only to players currently viewing this chunk
-            if (level.getChunkSource().chunkMap.getPlayers(chunk.getPos(), false).contains(viewer)) {
+            if (viewers.contains(viewer)) {
                 // Force client to forget chunk
                 viewer.connection.send(forget);
-                // Wait 1 tick before resending to prevent client ignoring resend
+                // Resend once the current tick is over, after the forget packet
                 level.getServer().execute(() -> {
                     viewer.connection.send(packet);
                 });
@@ -541,27 +751,25 @@ public class Generator {
     }
 
     /**
-     * Reset all chunks already watched
-     * Used when entering a new apocalypse phase
+     * Reset the chunks around every player in the overworld (each chunk once)
+     * Used when entering a new apocalypse phase or destruction step.
+     * Only loaded chunks are queued: loading the others here froze the server for
+     * seconds, and they catch up on every missed step as soon as a player sees them.
      */
-    public static void resetPlayerChunks(ServerPlayer player) {
-        if (player == null || player.hasDisconnected())
-            return;
-
-        ServerLevel level = player.serverLevel();
-        ChunkPos playerPos = new ChunkPos(player.blockPosition());
-        int viewDistance = level.getServer().getPlayerList().getViewDistance() + 1;
-
-        // Queue all visible chunks for reprocessing
-        for (int dx = -viewDistance; dx <= viewDistance; dx++) {
-            for (int dz = -viewDistance; dz <= viewDistance; dz++) {
-                int cx = playerPos.x + dx;
-                int cz = playerPos.z + dz;
-                LevelChunk chunk = level.getChunk(cx, cz);
-                if (chunk != null) {
-                    ChunkToProcess task = new ChunkToProcess(level, cx, cz);
-                    DayTracker.enqueueChunk(task);
-                    DayTracker.enqueueLightUpdateChunk(task);
+    public static void resetPlayersChunks(ServerLevel overworld) {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet queued = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        int viewDistance = overworld.getServer().getPlayerList().getViewDistance() + 1;
+        for (ServerPlayer player : overworld.players()) {
+            if (player.hasDisconnected())
+                continue;
+            ChunkPos playerPos = new ChunkPos(player.blockPosition());
+            for (int dx = -viewDistance; dx <= viewDistance; dx++) {
+                for (int dz = -viewDistance; dz <= viewDistance; dz++) {
+                    int cx = playerPos.x + dx;
+                    int cz = playerPos.z + dz;
+                    if (queued.add(ChunkPos.asLong(cx, cz)) && overworld.hasChunk(cx, cz)) {
+                        DayTracker.enqueueChunk(new ChunkToProcess(overworld, cx, cz));
+                    }
                 }
             }
         }
@@ -593,10 +801,38 @@ public class Generator {
     }
 
     public static void resetState() {
-        daysPerPhase = ConfigManager.apocalypseMaxDays / 5;
-        previousDay = 0 - daysPerPhase;
+        daysPerPhase = Math.max(1, ConfigManager.apocalypseMaxDays / 5);
         decelerateDaysPerPhase = daysPerPhase * 2;
         lastPlayedPhase = null;
+
+        final int day = ConfigManager.apocalypseCurrentDay;
+        final int phaseOfDay = Math.floorDiv(day, daysPerPhase);
+
+        // Configs written by older versions don't have the last applied phase: every phase
+        // up to the current day was applied when it was reached (none before day 1).
+        // A phase past the current day means the day was moved back by hand: same rule.
+        if (ConfigManager.lastAppliedPhase == ConfigManager.UNSET || ConfigManager.lastAppliedPhase > phaseOfDay) {
+            ConfigManager.lastAppliedPhase = day > 0 ? phaseOfDay : -1;
+        }
+
+        // The step saved by the ritual only means something once the apocalypse is over
+        // (e.g. it is left over from an apocalypse played in another world)
+        if (day < ConfigManager.apocalypseEndDay) {
+            ConfigManager.lastApocalypseStep = ConfigManager.UNSET;
+        }
+
+        // A config written by an older version past the countdown: its chunks stopped at
+        // step 5, count the later steps from today. A new countdown has no origin.
+        if (day < ConfigManager.apocalypseMaxDays) {
+            ConfigManager.stepOriginDay = ConfigManager.UNSET;
+        } else if (ConfigManager.legacyConfig && ConfigManager.stepOriginDay == ConfigManager.UNSET) {
+            ConfigManager.stepOriginDay = day;
+        }
+        if (ConfigManager.legacyConfig) {
+            // Write the new values now, so the next start does not take it for an old config
+            ConfigManager.legacyConfig = false;
+            ConfigManager.save();
+        }
 
         JudgementDayMod.LOGGER.info("[Apocalypse] Generator state reset (daysPerPhase=" + daysPerPhase + ")");
     }

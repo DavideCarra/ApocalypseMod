@@ -8,7 +8,11 @@
         "ServerLevelMixin",
         "ChunkGeneratorAccessor",
         "ServerChunkCacheAccessor",
-        "ChunkMapAccessor"
+        "ChunkMapAccessor",
+        "BeehiveDecoratorMixin",
+        "BeehiveBlockEntityMixin",
+        "MobMixin",
+        "NaturalSpawnerMixin"
     ],
     "injectors": {
         "defaultRequire": 1

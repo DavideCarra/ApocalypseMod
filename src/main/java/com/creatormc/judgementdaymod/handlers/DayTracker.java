@@ -7,6 +7,7 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.ChunkWatchEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
+import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -22,8 +23,10 @@ import com.creatormc.judgementdaymod.models.ApocalypseSyncPacket;
 import com.creatormc.judgementdaymod.models.ChunkToProcess;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.Analyzer;
+import com.creatormc.judgementdaymod.utilities.ChunkLightSync;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
+import com.creatormc.judgementdaymod.utilities.LightChecks;
 
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class DayTracker {
@@ -34,9 +37,6 @@ public class DayTracker {
 
     // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
-
-    // Thread-safe queue to process lights in the next tick
-    private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToLightUpdate = new ConcurrentLinkedQueue<>();
 
     @SubscribeEvent(priority = EventPriority.LOW)
     public static void onChunkWatch(ChunkWatchEvent.Watch event) {
@@ -56,17 +56,24 @@ public class DayTracker {
         // Inserisci chunk in the list
         ChunkToProcess task = new ChunkToProcess(serverLevel, chunkX, chunkZ);
         chunksToProcess.offer(task);
-        chunksToLightUpdate.offer(task);
 
     }
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) {
+            // Processed chunks whose light is computed (see ChunkLightSync)
+            ChunkLightSync.beforeTick();
+            return;
+        }
         if (event.phase != TickEvent.Phase.END)
             return;
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
 
         tickCount++;
+
+        // Send pending light corrections to clients (see ChunkLightSync)
+        ChunkLightSync.tick();
 
         // Clear cached burnable blocks periodically
         if (tickCount % 1000 == 0) {
@@ -91,6 +98,7 @@ public class DayTracker {
             if (currentDayTime < lastDayTime) {
                 ConfigManager.apocalypseCurrentDay++;
                 ConfigManager.save();
+                UnattendedChunkHandler.onNewDay(server.overworld());
                 Generator.handleDayEvent(player);
 
                 NetworkHandler.sendToClient(
@@ -104,6 +112,10 @@ public class DayTracker {
             // Update stored value for the next tick comparison
             lastDayTime = currentDayTime;
         }
+
+        // Nothing queued: skip the batch allocation
+        if (chunksToProcess.isEmpty())
+            return;
 
         // --- PROCESS MULTI-CHUNK BATCH PER TICK + SHUFFLE ---
         // Pull up to N tasks from the queue
@@ -121,17 +133,21 @@ public class DayTracker {
             // Collections.shuffle(batch, ThreadLocalRandom.current());
             Collections.shuffle(batchToProcesses, ThreadLocalRandom.current());
 
-            // Process batch
-            for (ChunkToProcess task : batchToProcesses) {
-                ServerLevel lvl = task.getLevel();
-                if (lvl == null || !lvl.getServer().isSameThread()
-                        || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
-                    continue;
-                }
+            // Process batch (their light checks are queued together at the end)
+            LightChecks.begin();
+            try {
+                for (ChunkToProcess task : batchToProcesses) {
+                    ServerLevel lvl = task.getLevel();
+                    if (lvl == null || !lvl.getServer().isSameThread()
+                            || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+                        continue;
+                    }
 
-                // Do the work
-                Generator.processChunk(task);
-                chunksToLightUpdate.offer(task);
+                    // Do the work
+                    Generator.processChunk(task);
+                }
+            } finally {
+                LightChecks.end();
             }
         }
 
@@ -145,15 +161,21 @@ public class DayTracker {
         tickCount = 0;
         lastDayTime = -1;
         chunksToProcess.clear();
+        ChunkLightSync.clear();
+        LightChecks.clear();
         Generator.resetState();
+    }
+
+    @SubscribeEvent
+    public static void onServerStopped(ServerStoppedEvent event) {
+        // Drop references to the stopped world so it can be garbage collected
+        chunksToProcess.clear();
+        ChunkLightSync.clear();
+        LightChecks.clear();
     }
 
     public static void enqueueChunk(ChunkToProcess c) {
         chunksToProcess.offer(c);
-    }
-
-    public static void enqueueLightUpdateChunk(ChunkToProcess c) {
-        chunksToLightUpdate.offer(c);
     }
 
 }
