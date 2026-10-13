@@ -88,18 +88,188 @@ public class SelfTestCommon {
             return;
         tick++;
         try {
-            if (scenario().startsWith("compare")) {
+            if (scenario().equals("clientlight") || scenario().equals("perf")) {
+                clientLightTick();
+            } else if (scenario().startsWith("compare")) {
                 compareTick();
             } else if (scenario().equals("generate")) {
                 generateTick();
-            } else if (scenario().equals("clientlight")) {
-                clientLightTick();
             }
         } catch (Throwable t) {
             log("EXCEPTION " + t);
             for (StackTraceElement el : t.getStackTrace())
                 log("   at " + el);
             finish();
+        }
+        afterHarnessNanos = System.nanoTime();
+    }
+
+    // ---------------------------------------------------------------- perf
+
+    static long tickStartNanos, harnessNanos, afterHarnessNanos;
+    static String perfWindow;
+    static final java.util.Map<String, List<long[]>> perfTicks = new java.util.LinkedHashMap<>();
+    static java.util.Map<Long, long[]> cpuStart;
+    static final java.util.Map<String, long[]> pktStats = new java.util.TreeMap<>();
+    static final net.minecraft.network.FriendlyByteBuf sizeBuf = new net.minecraft.network.FriendlyByteBuf(io.netty.buffer.Unpooled.buffer());
+
+    @SubscribeEvent(priority = net.minecraftforge.eventbus.api.EventPriority.HIGHEST)
+    public static void onTickFirst(TickEvent.ServerTickEvent event) {
+        if (server != null && event.phase == TickEvent.Phase.START) {
+            tickStartNanos = System.nanoTime();
+            harnessNanos = 0;
+            afterHarnessNanos = 0;
+        }
+    }
+
+    @SubscribeEvent(priority = net.minecraftforge.eventbus.api.EventPriority.LOWEST)
+    public static void onTickLast(TickEvent.ServerTickEvent event) {
+        if (server == null || event.phase != TickEvent.Phase.END || perfWindow == null)
+            return;
+        long now = System.nanoTime();
+        long total = now - tickStartNanos - harnessNanos;
+        long mod = afterHarnessNanos > 0 ? now - afterHarnessNanos : 0;
+        perfTicks.computeIfAbsent(perfWindow, k -> new ArrayList<>()).add(new long[] { total, mod });
+    }
+
+    static java.util.Map<Long, long[]> cpuSnapshot() {
+        java.lang.management.ThreadMXBean mx = java.lang.management.ManagementFactory.getThreadMXBean();
+        java.util.Map<Long, long[]> m = new java.util.HashMap<>();
+        for (long id : mx.getAllThreadIds()) {
+            long cpu = mx.getThreadCpuTime(id);
+            long alloc = mx instanceof com.sun.management.ThreadMXBean s ? s.getThreadAllocatedBytes(id) : 0;
+            m.put(id, new long[] { cpu, alloc });
+        }
+        return m;
+    }
+
+    static String threadGroup(long id) {
+        java.lang.management.ThreadInfo ti = java.lang.management.ManagementFactory.getThreadMXBean().getThreadInfo(id);
+        if (ti == null)
+            return "gone";
+        String n = ti.getThreadName();
+        if (n.equals("Server thread"))
+            return "main";
+        if (n.startsWith("Worker-Main"))
+            return "worker";
+        if (n.startsWith("IO-Worker"))
+            return "io";
+        return "other";
+    }
+
+    static void startWindow(String name) {
+        perfWindow = name;
+        cpuStart = cpuSnapshot();
+        pktStats.clear();
+    }
+
+    static void endWindow() {
+        if (perfWindow == null)
+            return;
+        java.util.Map<Long, long[]> end = cpuSnapshot();
+        java.util.Map<String, long[]> groups = new java.util.TreeMap<>();
+        for (java.util.Map.Entry<Long, long[]> e : end.entrySet()) {
+            long[] s = cpuStart.getOrDefault(e.getKey(), new long[] { 0, 0 });
+            long[] g = groups.computeIfAbsent(threadGroup(e.getKey()), k -> new long[2]);
+            g[0] += Math.max(0, e.getValue()[0] - s[0]);
+            g[1] += Math.max(0, e.getValue()[1] - s[1]);
+        }
+        List<long[]> ticks = perfTicks.getOrDefault(perfWindow, new ArrayList<>());
+        long[] totals = new long[ticks.size()];
+        long sum = 0, modSum = 0, modMax = 0;
+        int over50 = 0;
+        for (int i = 0; i < ticks.size(); i++) {
+            totals[i] = ticks.get(i)[0];
+            sum += ticks.get(i)[0];
+            modSum += ticks.get(i)[1];
+            modMax = Math.max(modMax, ticks.get(i)[1]);
+            if (ticks.get(i)[0] > 50_000_000L)
+                over50++;
+        }
+        long[] sorted = totals.clone();
+        java.util.Arrays.sort(sorted);
+        StringBuilder sb = new StringBuilder("PERF window=" + perfWindow + " ticks=" + ticks.size());
+        sb.append(String.format(java.util.Locale.ROOT, " tickTotalMs=%.1f p50=%.2f p95=%.2f max=%.1f over50=%d modEndTotalMs=%.1f modEndMax=%.1f",
+                sum / 1e6, pct(sorted, 50), pct(sorted, 95), sorted.length > 0 ? sorted[sorted.length - 1] / 1e6 : 0, over50,
+                modSum / 1e6, modMax / 1e6));
+        for (java.util.Map.Entry<String, long[]> g : groups.entrySet())
+            sb.append(String.format(java.util.Locale.ROOT, " cpu.%s=%.0fms alloc.%s=%.1fMB", g.getKey(), g.getValue()[0] / 1e6,
+                    g.getKey(), g.getValue()[1] / 1048576.0));
+        for (java.util.Map.Entry<String, long[]> p : pktStats.entrySet())
+            sb.append(" pkt." + p.getKey() + "=" + p.getValue()[0] + "/" + (p.getValue()[1] / 1024) + "KB"
+                    + (p.getValue().length > 2 ? "/zip" + (p.getValue()[2] / 1024) + "KB" : ""));
+        try {
+            long[] prof = (long[]) Generator.class.getField("PROF").get(null);
+            log(String.format(java.util.Locale.ROOT, "PROF window=%s modMainMs=%.1f processMs=%.1f evapMs=%.1f transformMs=%.1f updateClientsMs=%.1f deferredResendMs=%.2f chunks=%d",
+                    perfWindow, (prof[0] + prof[4]) / 1e6, prof[0] / 1e6, prof[5] / 1e6, prof[6] / 1e6, prof[3] / 1e6, prof[4] / 1e6, prof[7]));
+            if (prof.length > 8)
+                log(String.format(java.util.Locale.ROOT, "PROF2 window=%s transformCpuMs=%.1f evapCpuMs=%.1f lightPartMs=%.1f scheduleMs=%.1f primeMs=%.1f submitMs=%.1f",
+                        perfWindow, prof[12] / 1e6, prof[13] / 1e6, prof[8] / 1e6, prof[9] / 1e6, prof[10] / 1e6, prof[11] / 1e6));
+            try {
+                long[] sent = (long[]) Class.forName("com.creatormc.judgementdaymod.utilities.ChunkLightSync").getField("SENT").get(null);
+                log("PROF3 window=" + perfWindow + " modLightPackets=" + sent[0] + " modLightSections=" + sent[1]);
+                java.util.Arrays.fill(sent, 0);
+            } catch (NoSuchFieldException | ClassNotFoundException e) {
+                // not instrumented
+            }
+            java.util.Arrays.fill(prof, 0);
+        } catch (NoSuchFieldException e) {
+            // not instrumented
+        } catch (Exception e) {
+            log("PROF error " + e);
+        }
+        log(sb.toString());
+        perfWindow = null;
+    }
+
+    static double pct(long[] sorted, int p) {
+        if (sorted.length == 0)
+            return 0;
+        int i = Math.min(sorted.length - 1, (int) Math.ceil(p / 100.0 * sorted.length) - 1);
+        return sorted[Math.max(0, i)] / 1e6;
+    }
+
+    static void countPacket(Object msg) {
+        if (!(msg instanceof net.minecraft.network.protocol.Packet<?> packet))
+            return;
+        String name = msg.getClass().getSimpleName().replace("Clientbound", "").replace("Packet", "");
+        long bytes = 0;
+        try {
+            sizeBuf.clear();
+            packet.write(sizeBuf);
+            bytes = sizeBuf.writerIndex();
+        } catch (Throwable t) {
+            bytes = -1;
+        }
+        long[] st = pktStats.computeIfAbsent(name, k -> new long[2]);
+        st[0]++;
+        st[1] += Math.max(0, bytes);
+        // Network size on a dedicated server (compression threshold 256, zlib default level)
+        long wire = bytes;
+        if (bytes >= 256) {
+            byte[] raw = new byte[(int) bytes];
+            sizeBuf.getBytes(0, raw);
+            deflater.reset();
+            deflater.setInput(raw);
+            deflater.finish();
+            wire = 0;
+            while (!deflater.finished())
+                wire += deflater.deflate(deflateOut);
+        }
+        long[] tot = pktStats.computeIfAbsent("~TOTAL", k -> new long[3]);
+        tot[0]++;
+        tot[1] += Math.max(0, bytes);
+        tot[2] += Math.max(0, wire);
+    }
+
+    static final java.util.zip.Deflater deflater = new java.util.zip.Deflater();
+    static final byte[] deflateOut = new byte[65536];
+
+    static void resetChunksAroundPlayers(ServerLevel level) throws Exception {
+        try {
+            Generator.class.getMethod("resetPlayersChunks", ServerLevel.class).invoke(null, level);
+        } catch (NoSuchMethodException e) {
+            Generator.class.getMethod("resetPlayerChunks", net.minecraft.server.level.ServerPlayer.class).invoke(null, fakePlayer);
         }
     }
 
@@ -139,9 +309,10 @@ public class SelfTestCommon {
     static final java.util.Map<Long, Integer> lastBlockTick = new java.util.HashMap<>();
     static int packetsChunk, packetsLight, packetsForget, packetsBlocks;
 
-    static void clientLightTick() {
+    static void clientLightTick() throws Exception {
         ServerLevel level = server.getLevel(Level.OVERWORLD);
         if (stage == 0 && tick >= 20) {
+            long setup0 = System.nanoTime();
             freezeWorld(level);
             findRegions(level);
             configure();
@@ -159,6 +330,8 @@ public class SelfTestCommon {
             net.minecraft.network.Connection conn = new net.minecraft.network.Connection(
                     net.minecraft.network.protocol.PacketFlow.SERVERBOUND);
             channel = new io.netty.channel.embedded.EmbeddedChannel(conn);
+            harnessNanos += System.nanoTime() - setup0;
+            startWindow("join");
             server.getPlayerList().placeNewPlayer(conn, fakePlayer);
             fakePlayer.setGameMode(net.minecraft.world.level.GameType.CREATIVE);
             log("PLAYER at " + fakePlayer.blockPosition().toShortString());
@@ -173,34 +346,59 @@ public class SelfTestCommon {
                     ConfigManager.apocalypseCurrentDay = Integer.parseInt(change);
                     ConfigManager.minWaterEvaporationHeight = Integer.parseInt(props.getProperty("newWaterHeight", "4"));
                     ConfigManager.minDamageHeight = Integer.parseInt(props.getProperty("newDamageHeight", "4"));
-                    Generator.resetPlayersChunks(level);
+                    endWindow();
+                    startWindow("phase");
+                    resetChunksAroundPlayers(level);
                     log("PHASE CHANGE day=" + change);
                     stage = 2;
                     waitUntil = tick + Integer.parseInt(props.getProperty("lightTicks", "600"));
                 } else {
+                    endWindow();
+                    long h0 = System.nanoTime();
                     compareClientLight(level);
+                    harnessNanos += System.nanoTime() - h0;
                     finish();
                 }
             }
         } else if (stage == 2) {
             drainPackets();
             if (tick >= waitUntil) {
+                endWindow();
+                long h0 = System.nanoTime();
                 compareClientLight(level);
                 lightReport(level);
+                harnessNanos += System.nanoTime() - h0;
+                int idle = Integer.parseInt(props.getProperty("idleTicks", "0"));
+                if (idle > 0) {
+                    startWindow("idle");
+                    stage = 3;
+                    waitUntil = tick + idle;
+                } else {
+                    finish();
+                }
+            }
+        } else if (stage == 3) {
+            drainPackets();
+            if (tick >= waitUntil) {
+                endWindow();
                 finish();
             }
         }
     }
 
     static void drainPackets() {
+        long h0 = System.nanoTime();
         Object msg;
         while ((msg = channel.readOutbound()) != null) {
             handlePacket(msg);
         }
+        harnessNanos += System.nanoTime() - h0;
     }
 
     @SuppressWarnings("unchecked")
     static void handlePacket(Object msg) {
+        if (!(msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket))
+            countPacket(msg);
         if (msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket bundle) {
             for (Object sub : bundle.subPackets())
                 handlePacket(sub);
@@ -294,8 +492,22 @@ public class SelfTestCommon {
                             Integer lt = lastLightTick.get(sp.asLong());
                             Integer bt = lastBlockTick.get(sp.asLong());
                             boolean explained = bt != null && (lt == null || bt >= lt);
-                            if (!explained)
+                            if (!explained) {
                                 unexplained++;
+                                int diff = 0, maxd = 0;
+                                for (int b = 0; b < 2048; b++) {
+                                    int sv = s[b] & 0xff, cv = c == null ? 0 : c[b] & 0xff;
+                                    if (sv != cv) {
+                                        diff++;
+                                        maxd = Math.max(maxd, Math.max(Math.abs((sv & 15) - (cv & 15)), Math.abs((sv >> 4) - (cv >> 4))));
+                                    }
+                                }
+                                boolean edge = level.getChunkSource().chunkMap.getPlayers(new ChunkPos(x, z), true).contains(fakePlayer);
+                                if (unexplained <= 10)
+                                    log("UNEXPLAINED " + (layer == 0 ? "sky" : "block") + " " + x + " " + (min + i) + " " + z + " edge=" + edge
+                                            + " lastLight=" + lt + " lastBlock=" + bt + " now=" + tick + " diffBytes=" + diff + " maxDelta=" + maxd
+                                            + " clientNull=" + (c == null));
+                            }
                             if (layer == 0) {
                                 badSky++;
                                 if (!relit)
@@ -381,6 +593,14 @@ public class SelfTestCommon {
     /** No random change to the world between loading and processing (exact comparisons). */
     static void freezeWorld(ServerLevel level) {
         net.minecraft.world.level.GameRules rules = level.getGameRules();
+        if ("true".equals(props.getProperty("realistic"))) {
+            // Performance runs: the world lives (fire burns out, random ticks), only the
+            // clock, the weather and natural spawning stay still
+            rules.getRule(net.minecraft.world.level.GameRules.RULE_DOMOBSPAWNING).set(false, server);
+            rules.getRule(net.minecraft.world.level.GameRules.RULE_DAYLIGHT).set(false, server);
+            rules.getRule(net.minecraft.world.level.GameRules.RULE_WEATHER_CYCLE).set(false, server);
+            return;
+        }
         rules.getRule(net.minecraft.world.level.GameRules.RULE_RANDOMTICKING).set(0, server);
         rules.getRule(net.minecraft.world.level.GameRules.RULE_DOFIRETICK).set(false, server);
         rules.getRule(net.minecraft.world.level.GameRules.RULE_MOBGRIEFING).set(false, server);
@@ -484,6 +704,12 @@ public class SelfTestCommon {
                             + net.minecraftforge.registries.ForgeRegistries.BLOCK_ENTITY_TYPES.getKey(be.getType())));
                     bes.sort(null);
                     log(tag + " C " + x + " " + z + " " + Long.toHexString(chunkHash) + " BE" + bes);
+                    long hm = 1469598103934665603L;
+                    for (Heightmap.Types type : new Heightmap.Types[] { Heightmap.Types.WORLD_SURFACE, Heightmap.Types.OCEAN_FLOOR,
+                            Heightmap.Types.MOTION_BLOCKING, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES })
+                        for (long v : chunk.getOrCreateHeightmapUnprimed(type).getRawData())
+                            hm = (hm ^ v) * 1099511628211L;
+                    log(tag + " HM " + x + " " + z + " " + Long.toHexString(hm));
                     total ^= chunkHash;
                 }
             }

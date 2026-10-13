@@ -39,11 +39,19 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
 
     private final ChunkGenerator before;
 
+    // Chunk phase data of the level, handed over by the server thread: world generation
+    // threads must not look it up in the level data storage (a plain HashMap)
+    private volatile ApocalypseChunkData chunkData;
+
     private final BlockState ashState = ModBlocks.ASH_BLOCK.get().defaultBlockState();
 
     public ApocalypseChunkGenerator(ChunkGenerator before, BiomeSource biomeSource) {
         super(biomeSource);
         this.before = before; // delegate to the vanilla generator passed from JSON
+    }
+
+    public void setChunkData(ApocalypseChunkData data) {
+        this.chunkData = data;
     }
 
     @Override
@@ -153,7 +161,10 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
         before.buildSurface(region, sm, rs, chunk);
         
         // Register this chunk in the persistent apocalypse data
-        ApocalypseChunkData data = ApocalypseChunkData.get(region.getLevel());
+        ApocalypseChunkData data = chunkData;
+        if (data == null) {
+            data = ApocalypseChunkData.get(region.getLevel());
+        }
         data.setPhase(chunk.getPos(), Generator.stepForNewChunk()); // Initial phase
 
         // Skip if apocalypse is not active since terrain will turn to ash later anyway

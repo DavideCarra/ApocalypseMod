@@ -26,6 +26,7 @@ import com.creatormc.judgementdaymod.utilities.Analyzer;
 import com.creatormc.judgementdaymod.utilities.ChunkLightSync;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
+import com.creatormc.judgementdaymod.utilities.LightChecks;
 
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class DayTracker {
@@ -60,6 +61,11 @@ public class DayTracker {
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) {
+            // Processed chunks whose light is computed (see ChunkLightSync)
+            ChunkLightSync.beforeTick();
+            return;
+        }
         if (event.phase != TickEvent.Phase.END)
             return;
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
@@ -92,6 +98,7 @@ public class DayTracker {
             if (currentDayTime < lastDayTime) {
                 ConfigManager.apocalypseCurrentDay++;
                 ConfigManager.save();
+                UnattendedChunkHandler.onNewDay(server.overworld());
                 Generator.handleDayEvent(player);
 
                 NetworkHandler.sendToClient(
@@ -126,16 +133,21 @@ public class DayTracker {
             // Collections.shuffle(batch, ThreadLocalRandom.current());
             Collections.shuffle(batchToProcesses, ThreadLocalRandom.current());
 
-            // Process batch
-            for (ChunkToProcess task : batchToProcesses) {
-                ServerLevel lvl = task.getLevel();
-                if (lvl == null || !lvl.getServer().isSameThread()
-                        || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
-                    continue;
-                }
+            // Process batch (their light checks are queued together at the end)
+            LightChecks.begin();
+            try {
+                for (ChunkToProcess task : batchToProcesses) {
+                    ServerLevel lvl = task.getLevel();
+                    if (lvl == null || !lvl.getServer().isSameThread()
+                            || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+                        continue;
+                    }
 
-                // Do the work
-                Generator.processChunk(task);
+                    // Do the work
+                    Generator.processChunk(task);
+                }
+            } finally {
+                LightChecks.end();
             }
         }
 
@@ -150,6 +162,7 @@ public class DayTracker {
         lastDayTime = -1;
         chunksToProcess.clear();
         ChunkLightSync.clear();
+        LightChecks.clear();
         Generator.resetState();
     }
 
@@ -158,6 +171,7 @@ public class DayTracker {
         // Drop references to the stopped world so it can be garbage collected
         chunksToProcess.clear();
         ChunkLightSync.clear();
+        LightChecks.clear();
     }
 
     public static void enqueueChunk(ChunkToProcess c) {

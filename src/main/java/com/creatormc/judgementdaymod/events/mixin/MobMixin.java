@@ -22,7 +22,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(Mob.class)
 public class MobMixin {
 
-    @Inject(method = "finalizeSpawn", at = @At("HEAD"))
+    @Inject(method = "finalizeSpawn", at = @At("HEAD"), require = 0)
     private void judgementday$onFinalizeSpawn(ServerLevelAccessor level, DifficultyInstance difficulty,
             MobSpawnType spawnType, SpawnGroupData spawnData, CompoundTag tag,
             CallbackInfoReturnable<SpawnGroupData> cir) {

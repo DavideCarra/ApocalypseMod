@@ -50,10 +50,24 @@ public class ApocalypseChunkData extends SavedData {
     }
 
     @Override
-    public synchronized CompoundTag save(@Nonnull CompoundTag tag) {
+    public CompoundTag save(@Nonnull CompoundTag tag) {
+        // Copy under the lock, build the (much slower) tag outside it: world generation
+        // threads setting phases meanwhile do not have to wait
+        final long[] keys;
+        final int[] phases;
+        synchronized (this) {
+            keys = new long[chunkPhases.size()];
+            phases = new int[keys.length];
+            int i = 0;
+            for (Long2IntMap.Entry entry : chunkPhases.long2IntEntrySet()) {
+                keys[i] = entry.getLongKey();
+                phases[i] = entry.getIntValue();
+                i++;
+            }
+        }
         CompoundTag chunksTag = new CompoundTag();
-        for (Long2IntMap.Entry entry : chunkPhases.long2IntEntrySet()) {
-            chunksTag.putInt(String.valueOf(entry.getLongKey()), entry.getIntValue());
+        for (int i = 0; i < keys.length; i++) {
+            chunksTag.putInt(String.valueOf(keys[i]), phases[i]);
         }
         tag.put("Chunks", chunksTag);
         return tag;

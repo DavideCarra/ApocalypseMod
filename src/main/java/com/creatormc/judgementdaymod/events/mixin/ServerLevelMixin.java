@@ -62,12 +62,13 @@ public class ServerLevelMixin {
 
             // Load the chunk phase data now, on the server thread: world generation threads
             // read it concurrently later and would otherwise race to create it
-            ApocalypseChunkData.get(level);
+            ApocalypseChunkData chunkData = ApocalypseChunkData.get(level);
             ServerChunkCache serverChunkCache = (ServerChunkCache) level.getChunkSource();
             ChunkGenerator originalGenerator = serverChunkCache.getGenerator();
 
             // Avoid wrapping twice
-            if (originalGenerator instanceof ApocalypseChunkGenerator) {
+            if (originalGenerator instanceof ApocalypseChunkGenerator installed) {
+                installed.setChunkData(chunkData);
                 JudgementDayMod.LOGGER.info("[JudgementDayMixin] ApocalypseChunkGenerator already active, skipping.");
                 return;
             }
@@ -75,6 +76,7 @@ public class ServerLevelMixin {
             // Create the Apocalypse generator wrapper
             ApocalypseChunkGenerator apocalypseGenerator = new ApocalypseChunkGenerator(originalGenerator,
                     ((ChunkGeneratorAccessor) originalGenerator).getBiomeSource_JD());
+            apocalypseGenerator.setChunkData(chunkData);
 
             // Replace the private generator field in ChunkMap
             ChunkMap chunkMap = ((ServerChunkCacheAccessor) serverChunkCache).getChunkMap_JD();

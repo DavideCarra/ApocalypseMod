@@ -32,6 +32,9 @@ println "Java: ${System.getProperty 'java.version'}, JVM: ${System.getProperty '
 minecraft {
     mappings channel: mapping_channel, version: mapping_version
 
+    // Opens the light engine members used by LightChecks
+    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
+
     copyIdeResources = true
 
     runs {

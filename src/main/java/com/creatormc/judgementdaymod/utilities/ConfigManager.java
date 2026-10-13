@@ -105,14 +105,9 @@ public class ConfigManager {
 
             legacyConfig = !props.containsKey("lastAppliedPhase");
 
-            lastAppliedPhase = Integer.parseInt(
-                    props.getProperty("lastAppliedPhase", String.valueOf(UNSET)));
-
-            stepOriginDay = Integer.parseInt(
-                    props.getProperty("stepOriginDay", String.valueOf(UNSET)));
-
-            lastApocalypseStep = Integer.parseInt(
-                    props.getProperty("lastApocalypseStep", String.valueOf(UNSET)));
+            lastAppliedPhase = parseOrUnset(props, "lastAppliedPhase");
+            stepOriginDay = parseOrUnset(props, "stepOriginDay");
+            lastApocalypseStep = parseOrUnset(props, "lastApocalypseStep");
 
             if (startBeforeApocalypse) {
                 startBeforeApocalypse = false;
@@ -125,6 +120,22 @@ public class ConfigManager {
 
         } catch (IOException e) {
             JudgementDayMod.LOGGER.error("[JudgementDayMod] Error reading config: " + e.getMessage());
+        }
+    }
+
+    /**
+     * A value written by the mod itself: missing or unreadable (edited by hand) means
+     * unknown, it is then worked out again.
+     */
+    private static int parseOrUnset(Properties props, String key) {
+        String value = props.getProperty(key);
+        if (value == null)
+            return UNSET;
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            JudgementDayMod.LOGGER.warn("[JudgementDayMod] Ignoring invalid " + key + "=" + value);
+            return UNSET;
         }
     }
 

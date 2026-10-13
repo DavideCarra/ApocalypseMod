@@ -1,6 +1,7 @@
 package com.creatormc.judgementdaymod.utilities;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 
@@ -22,7 +23,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.ChunkPos;
@@ -187,8 +187,8 @@ public class Generator {
                 data.setPhase(chunkPos, currentStep);
             }
 
-            // PHASE 3: Update clients
-            if (hadChanges) {
+            // PHASE 3: Update clients (once the light around the chunk is computed, if any)
+            if (hadChanges && !ChunkLightSync.resendWhenLit(chunk)) {
                 updateClients(chunk, level);
             }
 
@@ -264,6 +264,8 @@ public class Generator {
                 final boolean notifyClients = (offsetX != 0 || offsetZ != 0)
                         && currentStep <= data.getPhase(targetChunk.getPos());
                 boolean chunkChanged = false;
+                final LightChecks lightChecks = new LightChecks(level, targetChunkX, targetChunkZ, false);
+                Heightmap[] heightmaps = null;
 
                 // Iterate ONLY over sections that contain water
                 for (int i = 0; i < sectionsWithWaterCount; i++) {
@@ -343,15 +345,19 @@ public class Generator {
                                     level.getChunkSource().blockChanged(mutablePos);
                                 }
 
-                                // Light management
+                                // Heightmaps follow the change, as LevelChunk#setBlockState does
+                                if (heightmaps == null) {
+                                    heightmaps = heightmaps(targetChunk);
+                                }
+                                for (Heightmap heightmap : heightmaps) {
+                                    heightmap.update(localX, worldY, localZ, airState);
+                                }
+
+                                // Light management (checks queued below, all at once)
                                 if (LightEngine.hasDifferentLightProperties(targetChunk, mutablePos, oldState,
                                         airState)) {
-                                    ProfilerFiller profiler = level.getProfiler();
-                                    profiler.push("updateSkyLightSources");
                                     targetChunk.getSkyLightSources().update(targetChunk, localX, worldY, localZ);
-                                    profiler.popPush("queueCheckLight");
-                                    level.getChunkSource().getLightEngine().checkBlock(mutablePos);
-                                    profiler.pop();
+                                    lightChecks.add(mutablePos);
                                 }
 
                             }
@@ -369,16 +375,11 @@ public class Generator {
                 // Mark chunk for saving if modified
                 if (hadChanges) {
                     targetChunk.setUnsaved(true);
-                    // Heightmaps only need rebuilding if a block of THIS chunk changed:
-                    // on an untouched chunk they are already exact and priming is a no-op
-                    if (chunkChanged) {
-                        Heightmap.primeHeightmaps(targetChunk, targetChunk.getStatus().heightmapsAfter());
-                    }
                 }
 
-                // Light checks were queued for this chunk: forward the final light to clients
-                if (chunkChanged) {
-                    ChunkLightSync.watchArea(level, targetChunkX, targetChunkZ);
+                // Light checks of this chunk: queued, then forwarded to clients once computed
+                if (lightChecks.submit()) {
+                    ChunkLightSync.lightQueued(level, targetChunkX, targetChunkZ);
                 }
             }
         }
@@ -427,16 +428,24 @@ public class Generator {
         // Track which sections were modified
         final boolean[] dirtySection = new boolean[sectionsCount];
         boolean hadChanges = false;
-        boolean lightChanged = false;
+        // Sky light checks of the changed blocks (shadows), queued below all at once.
+        // The block light is left as it always was (the fires lit here do not glow), and so
+        // is the light around those fires: they burn out within moments and vanilla checks
+        // their spot then, checking them now too would only double that light work.
+        final LightChecks lightChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, true);
+        // A falling block left air behind: vanilla queued its light check
+        boolean blockFell = false;
 
         // Cache heightmap for fast surface access
         final Heightmap wsHM = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
+        // Heightmaps follow every change, as LevelChunk#setBlockState does
+        final Heightmap[] heightmaps = heightmaps(chunk);
 
         // Single pass over all columns
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
-                // Highest non air block of the column, read from the heightmap only once:
-                // the edits below bypass it, so later steps follow the column themselves
+                // Highest non air block of the column, read from the heightmap for the first
+                // step only: later steps follow the column themselves (see highestNonAir)
                 int topY = Integer.MIN_VALUE;
 
                 for (int stepIndex = 0; stepIndex < thresholds.length; stepIndex++) {
@@ -549,12 +558,15 @@ public class Generator {
                             targetSection.setBlockState(lx, finalLy, lz, newState, false);
                             dirtySection[finalSecIndex] = true;
                             hadChanges = true;
+                            for (Heightmap heightmap : heightmaps) {
+                                heightmap.update(lx, targetY, lz, newState);
+                            }
 
-                            // Light management (fire glows, ash blocks the light, ...)
-                            if (LightEngine.hasDifferentLightProperties(chunk, pos, oldState, newState)) {
+                            // Light management (e.g. water or snow gone, ash in place of a slab)
+                            if (newBlock != fireBlock
+                                    && LightEngine.hasDifferentLightProperties(chunk, pos, oldState, newState)) {
                                 chunk.getSkyLightSources().update(chunk, lx, targetY, lz);
-                                level.getChunkSource().getLightEngine().checkBlock(pos);
-                                lightChanged = true;
+                                lightChecks.add(pos);
                             }
 
                             // Schedule ticks inline
@@ -576,8 +588,7 @@ public class Generator {
                                 BlockPos belowPos = pos.below();
                                 if (FallingBlock.isFree(level.getBlockState(belowPos))) {
                                     FallingBlockEntity.fall(level, pos, newState);
-                                    // The block left behind relights the area too
-                                    lightChanged = true;
+                                    blockFell = true;
                                 }
                             }
                         }
@@ -601,15 +612,15 @@ public class Generator {
             }
         }
 
-        // Update heightmaps if there were changes
+        // Save the chunk if there were changes
         if (hadChanges) {
             chunk.setUnsaved(true);
-            Heightmap.primeHeightmaps(chunk, chunk.getStatus().heightmapsAfter());
         }
 
-        // Light checks were queued: forward the final light to clients
-        if (lightChanged) {
-            ChunkLightSync.watchArea(level, chunk.getPos().x, chunk.getPos().z);
+        // Light checks queued: forward the final light to clients once computed
+        final boolean lightQueued = lightChecks.submit();
+        if (lightQueued || blockFell) {
+            ChunkLightSync.lightQueued(level, chunk.getPos().x, chunk.getPos().z);
         }
 
         return hadChanges;
@@ -637,6 +648,21 @@ public class Generator {
                 return y;
         }
         return Integer.MIN_VALUE + 1;
+    }
+
+    /**
+     * The heightmaps of the chunk, kept up to date block by block while editing its
+     * sections (the same updates LevelChunk#setBlockState makes). Rebuilding them from
+     * scratch afterwards gives the same result but scans every column of the chunk.
+     */
+    private static Heightmap[] heightmaps(LevelChunk chunk) {
+        final java.util.Set<Heightmap.Types> types = chunk.getStatus().heightmapsAfter();
+        final Heightmap[] maps = new Heightmap[types.size()];
+        int i = 0;
+        for (Heightmap.Types type : types) {
+            maps[i++] = chunk.getOrCreateHeightmapUnprimed(type);
+        }
+        return maps;
     }
 
     /**
@@ -719,8 +745,13 @@ public class Generator {
      * UPDATE CLIENTS
      * Sends chunk update to clients
      */
-    private static void updateClients(LevelChunk chunk, ServerLevel level) {
+    static void updateClients(LevelChunk chunk, ServerLevel level) {
         final ChunkPos chunkPos = chunk.getPos();
+
+        // Players currently viewing this chunk
+        final List<ServerPlayer> viewers = level.getChunkSource().chunkMap.getPlayers(chunkPos, false);
+        if (viewers.isEmpty())
+            return;
 
         // Refresh entire chunk for client updates
         ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(chunk,
@@ -731,7 +762,7 @@ public class Generator {
 
         for (ServerPlayer viewer : level.players()) {
             // Send only to players currently viewing this chunk
-            if (level.getChunkSource().chunkMap.getPlayers(chunk.getPos(), false).contains(viewer)) {
+            if (viewers.contains(viewer)) {
                 // Force client to forget chunk
                 viewer.connection.send(forget);
                 // Resend once the current tick is over, after the forget packet

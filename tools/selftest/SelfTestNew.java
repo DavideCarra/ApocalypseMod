@@ -67,8 +67,7 @@ public class SelfTestNew {
         ChunkPos p = event.getChunk().getPos();
         for (int i = 0; i < MOB_CHUNKS.length; i += 2)
             if (p.x == MOB_CHUNKS[i] && p.z == MOB_CHUNKS[i + 1])
-                SelfTestCommon.log("DEBUG chunk load " + p + " new=" + event.isNewChunk() + " stamp="
-                        + com.creatormc.judgementdaymod.utilities.ApocalypseMobData.get(level).getSavedDay(p.toLong()) + " day=" + ConfigManager.apocalypseCurrentDay
+                SelfTestCommon.log("DEBUG chunk load " + p + " new=" + event.isNewChunk() + " day=" + ConfigManager.apocalypseCurrentDay
                         + " level=" + event.getChunk().getClass().getSimpleName());
     }
 
@@ -129,6 +128,7 @@ public class SelfTestNew {
             ritualWater(level);
             animals(level);
             animalsMore(level);
+            reviewFixes(level);
             stage = 1;
             waitUntil = tick + 60;
         } else if (stage == 1 && tick >= waitUntil) {
@@ -314,15 +314,15 @@ public class SelfTestNew {
         try {
             for (int round = 0; round < 3; round++) {
                 for (int i = 0; i < 700; i++)
-                    ChunkLightSync.watchArea(level, 5000 + i * 3, 5000 + round * 7);
-                for (int i = 0; i < 2100; i++)
-                    ChunkLightSync.onSectionLightChanged(level.getLightEngine(), new ChunkPos(4999 + i, 5000 + round * 7), LightLayer.SKY, 4);
+                    ChunkLightSync.lightQueued(level, 5000 + i * 3, 5000 + round * 7);
                 for (int t = 0; t < 700; t++)
                     ChunkLightSync.tick();
             }
         } catch (Throwable t) {
             error = t.toString();
         }
+        // The markers of this test come back only after it: start the real game clean
+        ChunkLightSync.clear();
         check("ChunkLightSync many entries settle/expire without exception", error.isEmpty(), error);
     }
 
@@ -424,6 +424,7 @@ public class SelfTestNew {
         check("zombie placement unaffected", zBefore == zAfter, "before=" + zBefore + " after=" + zAfter);
 
         ConfigManager.apocalypseCurrentDay = 250; // after the end
+        ConfigManager.apocalypseActive = true; // the game reached 100%
         Entity structure = EntityType.COW.spawn(level, grass, MobSpawnType.STRUCTURE);
         Entity spawner = EntityType.COW.spawn(level, grass, MobSpawnType.SPAWNER);
         Entity egg = EntityType.COW.spawn(level, grass, MobSpawnType.SPAWN_EGG);
@@ -450,6 +451,98 @@ public class SelfTestNew {
 
     static BlockPos breedPos;
 
+    /** Fixes from the second review. */
+    static void reviewFixes(ServerLevel level) {
+        BlockPos grass = breedPos;
+        // A ritual before 100% leaves the animals alone, one after 100% does not
+        defaults();
+        ConfigManager.apocalypseCurrentDay = 15;
+        ConfigManager.lastApocalypseStep = Generator.currentStep();
+        ConfigManager.apocalypseEndDay = 15;
+        ConfigManager.apocalypseMaxDays = 14;
+        boolean cowEarly = SpawnPlacements.checkSpawnRules(EntityType.COW, level, MobSpawnType.NATURAL, grass, level.random);
+        ConfigManager.apocalypseCurrentDay = 40;
+        boolean extinctLater = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.isExtinct();
+        check("ritual before 100% keeps animals", cowEarly && !extinctLater,
+                "cow=" + cowEarly + " extinctLater=" + extinctLater + " step=" + Generator.currentStep());
+        defaults();
+        ConfigManager.apocalypseCurrentDay = 60;
+        ConfigManager.lastApocalypseStep = Generator.currentStep();
+        ConfigManager.apocalypseEndDay = 60;
+        ConfigManager.apocalypseMaxDays = 59;
+        ConfigManager.apocalypseCurrentDay = 70;
+        ConfigManager.apocalypseActive = true; // the game reached 100%
+        check("ritual after 100% keeps extinction", com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.isExtinct(), "");
+        defaults();
+        ConfigManager.apocalypseCurrentDay = 49;
+        boolean at49 = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.isExtinct();
+        ConfigManager.apocalypseCurrentDay = 50;
+        boolean at50 = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.isExtinct();
+        ConfigManager.apocalypseCurrentDay = 250;
+        ConfigManager.apocalypseActive = true; // the game reached 100%
+        boolean afterEnd = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.isExtinct();
+        check("extinct exactly from 100% and after the end", !at49 && at50 && afterEnd, at49 + " " + at50 + " " + afterEnd);
+
+        // Natural spawning of the animal categories is skipped up front
+        ServerLevel nether = SelfTestCommon.server.getLevel(Level.NETHER);
+        boolean skipAmbient = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.skipsNaturalSpawning(level, net.minecraft.world.entity.MobCategory.AMBIENT);
+        boolean skipWater = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.skipsNaturalSpawning(level, net.minecraft.world.entity.MobCategory.WATER_AMBIENT);
+        boolean skipMonster = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.skipsNaturalSpawning(level, net.minecraft.world.entity.MobCategory.MONSTER);
+        boolean skipNether = nether != null && com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.skipsNaturalSpawning(nether, net.minecraft.world.entity.MobCategory.CREATURE);
+        ConfigManager.apocalypseCurrentDay = 10;
+        ConfigManager.apocalypseActive = false;
+        boolean skipBefore = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.skipsNaturalSpawning(level, net.minecraft.world.entity.MobCategory.AMBIENT);
+        check("natural spawner skips only extinct animal categories", skipAmbient && skipWater && !skipMonster && !skipNether && !skipBefore,
+                skipAmbient + " " + skipWater + " " + skipMonster + " " + skipNether + " " + skipBefore);
+
+        // A mod calling finalizeSpawn without a spawn type
+        ConfigManager.apocalypseCurrentDay = 250;
+        ConfigManager.apocalypseActive = true; // the game reached 100%
+        String error = "";
+        try {
+            net.minecraft.world.entity.animal.Cow cow = EntityType.COW.create(level);
+            cow.moveTo(grass.getX() + 0.5, grass.getY(), grass.getZ() + 0.5, 0, 0);
+            cow.finalizeSpawn(level, level.getCurrentDifficultyAt(grass), null, null, null);
+        } catch (Throwable t) {
+            error = t.toString();
+        }
+        check("finalizeSpawn without spawn type", error.isEmpty(), error);
+
+        // Another mod cancelled the spawn event: the animal is still refused
+        net.minecraft.world.entity.animal.Cow cow2 = EntityType.COW.create(level);
+        cow2.moveTo(grass.getX() + 0.5, grass.getY(), grass.getZ() + 0.5, 0, 0);
+        net.minecraftforge.event.entity.living.MobSpawnEvent.FinalizeSpawn ev = new net.minecraftforge.event.entity.living.MobSpawnEvent.FinalizeSpawn(
+                cow2, level, cow2.getX(), cow2.getY(), cow2.getZ(), level.getCurrentDifficultyAt(grass), MobSpawnType.SPAWNER, null, null, null);
+        ev.setCanceled(true);
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(ev);
+        check("cancelled spawn event still refuses the animal", cow2.isSpawnCancelled(), "");
+
+        // Loaded mobs get today's day on a new day
+        Entity cmd = EntityType.COW.spawn(level, grass, MobSpawnType.COMMAND);
+        com.creatormc.judgementdaymod.handlers.UnattendedChunkHandler.onNewDay(level);
+        int stamped = cmd == null ? -1 : cmd.getPersistentData().getInt("judgementday_lastSeenDay");
+        check("new day stamps loaded mobs", stamped == 200, "stamp=" + stamped);
+        if (cmd != null)
+            cmd.discard();
+
+        // A bee entering a hive is kept even if a decorator left the flag set
+        BlockPos hivePos = grass.above(3);
+        level.setBlock(hivePos, Blocks.BEEHIVE.defaultBlockState(), 2);
+        com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.EMPTY_NEW_NESTS.set(true);
+        int occupants = -1;
+        if (level.getBlockEntity(hivePos) instanceof net.minecraft.world.level.block.entity.BeehiveBlockEntity hive) {
+            net.minecraft.world.entity.animal.Bee bee = EntityType.BEE.create(level);
+            bee.moveTo(hivePos.getX() + 0.5, hivePos.getY() + 1, hivePos.getZ() + 0.5, 0, 0);
+            hive.addOccupant(bee, false);
+            occupants = hive.getOccupantCount();
+        }
+        boolean flag = com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.EMPTY_NEW_NESTS.get();
+        com.creatormc.judgementdaymod.handlers.AnimalExtinctionHandler.EMPTY_NEW_NESTS.set(false);
+        level.setBlock(hivePos, Blocks.AIR.defaultBlockState(), 2);
+        check("bee entering a hive clears a stuck nest flag", occupants == 1 && !flag, "occupants=" + occupants + " flag=" + flag);
+        defaults();
+    }
+
     static void animalsMore(ServerLevel level) {
         defaults();
         BlockPos pos = surface(level, 2100, 2100);
@@ -460,6 +553,7 @@ public class SelfTestNew {
                     level.setBlock(pos.offset(dx, dy, dz), Blocks.AIR.defaultBlockState(), 2);
             }
         ConfigManager.apocalypseCurrentDay = 250;
+        ConfigManager.apocalypseActive = true; // the game reached 100%
 
         Entity trader = EntityType.WANDERING_TRADER.spawn(level, pos, MobSpawnType.EVENT);
         Entity llama = EntityType.TRADER_LLAMA.spawn(level, pos, MobSpawnType.EVENT);
@@ -496,6 +590,7 @@ public class SelfTestNew {
         // New bee nests: empty from 100% on, with bees before
         check("bee nest empty after the end", beeNest(level, pos.offset(0, 0, 0)) == 0, "");
         ConfigManager.apocalypseCurrentDay = 10;
+        ConfigManager.apocalypseActive = false;
         int before = beeNest(level, pos.offset(0, 0, 3));
         check("bee nest has bees before 100%", before >= 2, "bees=" + before);
         defaults();
@@ -528,6 +623,7 @@ public class SelfTestNew {
     /** Breeding: two adult cows in love, in a chunk loaded for a while. */
     static void breedingStart(ServerLevel level) {
         ConfigManager.apocalypseCurrentDay = 250; // after the end
+        ConfigManager.apocalypseActive = true; // the game reached 100%
         BlockPos grass = breedPos;
         Cow a = EntityType.COW.spawn(level, grass, MobSpawnType.SPAWN_EGG);
         Cow b = EntityType.COW.spawn(level, grass, MobSpawnType.SPAWN_EGG);

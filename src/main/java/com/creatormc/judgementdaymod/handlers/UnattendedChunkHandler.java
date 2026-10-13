@@ -2,19 +2,23 @@ package com.creatormc.judgementdaymod.handlers;
 
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.ApocalypseChunkData;
-import com.creatormc.judgementdaymod.utilities.ApocalypseMobData;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraftforge.common.ForgeHooks;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
@@ -26,15 +30,18 @@ import net.minecraftforge.fml.common.Mod;
  * ones left in the open in an area nobody visited during the apocalypse would still
  * be there when a player comes back, even after the apocalypse is over.
  *
- * The day the mobs of each overworld chunk were last saved to disk (chunk left
- * behind, or server stopped) is recorded. When they are loaded back after at least
- * one full apocalypse day, the ones that were exposed (sky above them, above the
- * damage height, not in water and not immune to fire) are not loaded back: they
- * burned while nobody was looking. Mobs sheltered underground, under a roof or in
- * water survive.
+ * Every overworld mob remembers the last day it was in the loaded world (written
+ * when it is saved with its chunk, when the server stops and on every new day). When
+ * it is loaded back after at least one full apocalypse day, it is not loaded back if
+ * it was exposed (sky above it, above the damage height, not in water, not immune
+ * to fire, not protected by another mod): it burned while nobody was looking. Mobs
+ * sheltered underground, under a roof or in water survive.
  */
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class UnattendedChunkHandler {
+
+    // Last day the mob was in the loaded world (in its Forge persistent data)
+    private static final String LAST_SEEN_DAY = "judgementday_lastSeenDay";
 
     /**
      * A mob left behind with its chunk: remember the day. When a chunk stops being
@@ -51,32 +58,43 @@ public class UnattendedChunkHandler {
         if (!(event.getLevel() instanceof ServerLevel level) || level.dimension() != Level.OVERWORLD)
             return;
 
-        ApocalypseMobData.get(level).setSavedDay(chunkKey(mob), dayToSave());
+        stamp(mob, dayToSave());
     }
 
     /**
-     * Today, but never past the end: after it nothing burns any more, so the saved
-     * day (and the data file) no longer needs to change.
+     * Today, but never past the end: after it nothing burns any more.
      */
     private static int dayToSave() {
         return Math.min(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseEndDay);
     }
 
+    private static void stamp(Mob mob, int day) {
+        mob.getPersistentData().putInt(LAST_SEEN_DAY, day);
+    }
+
     /**
-     * The mobs still loaded when the server stops are saved without leaving the level:
-     * record today for their chunks (before the world data is written).
+     * The mobs still loaded when the server stops are saved without leaving the level.
      */
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
-        ServerLevel level = event.getServer().getLevel(Level.OVERWORLD);
+        stampLoadedMobs(event.getServer().getLevel(Level.OVERWORLD));
+    }
+
+    /**
+     * A new day started: the loaded mobs are seen today (they are saved again only
+     * when their chunk is, so a crash would otherwise leave an older day on disk).
+     */
+    public static void onNewDay(ServerLevel overworld) {
+        stampLoadedMobs(overworld);
+    }
+
+    private static void stampLoadedMobs(ServerLevel level) {
         if (level == null)
             return;
-
-        ApocalypseMobData data = ApocalypseMobData.get(level);
         final int day = dayToSave();
         for (Entity entity : level.getAllEntities()) {
-            if (entity instanceof Mob) {
-                data.setSavedDay(chunkKey(entity), day);
+            if (entity instanceof Mob mob) {
+                stamp(mob, day);
             }
         }
     }
@@ -92,10 +110,10 @@ public class UnattendedChunkHandler {
         if (mob.isPassenger() || mob.isVehicle())
             return;
 
-        final int savedDay = ApocalypseMobData.get(level).getSavedDay(chunkKey(mob));
+        final CompoundTag data = mob.getPersistentData();
         final boolean unattended;
-        if (savedDay != ConfigManager.UNSET) {
-            unattended = unattendedApocalypseDays(savedDay, ConfigManager.apocalypseCurrentDay) > 0;
+        if (data.contains(LAST_SEEN_DAY, Tag.TAG_INT)) {
+            unattended = unattendedApocalypseDays(data.getInt(LAST_SEEN_DAY), ConfigManager.apocalypseCurrentDay) > 0;
         } else {
             // Saved by an older version (no day recorded): the chunk was left alone if it
             // missed one of the phases (the only steps older versions recorded)
@@ -112,22 +130,30 @@ public class UnattendedChunkHandler {
         }
     }
 
-    private static long chunkKey(Entity entity) {
-        return ChunkPos.asLong(SectionPos.blockToSectionCoord(entity.getBlockX()),
-                SectionPos.blockToSectionCoord(entity.getBlockZ()));
-    }
-
     private static boolean burnedInTheOpen(ServerLevel level, Mob mob) {
         // Fire immune or invulnerable mobs never take the apocalypse fire damage
-        if (mob.isInvulnerableTo(level.damageSources().inFire()) || mob.hasEffect(MobEffects.FIRE_RESISTANCE))
+        final DamageSource fire = level.damageSources().inFire();
+        if (mob.isInvulnerableTo(fire) || mob.hasEffect(MobEffects.FIRE_RESISTANCE))
             return false;
         if (mob.getY() < ConfigManager.minDamageHeight)
             return false;
 
+        // Read from the chunk in memory: never load or wait for one here
         BlockPos pos = mob.blockPosition();
-        if (level.getFluidState(pos).is(FluidTags.WATER))
+        LevelChunk chunk = level.getChunkSource().getChunkNow(SectionPos.blockToSectionCoord(pos.getX()),
+                SectionPos.blockToSectionCoord(pos.getZ()));
+        if (chunk == null || chunk.getFluidState(pos).is(FluidTags.WATER))
             return false;
-        return level.canSeeSky(pos);
+        if (!level.canSeeSky(pos))
+            return false;
+
+        // The live burn goes through the damage events: mods protecting the mob from it
+        // (claims, pets, NPCs) protect it here too
+        try {
+            return ForgeHooks.onLivingAttack(mob, fire, 2.0F);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**

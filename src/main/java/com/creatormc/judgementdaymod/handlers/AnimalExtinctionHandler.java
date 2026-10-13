@@ -4,6 +4,7 @@ import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.ambient.AmbientCreature;
@@ -26,19 +27,25 @@ import net.minecraftforge.fml.common.Mod;
 
 /**
  * Once the apocalypse has burned the world (100% reached, also after it ends or
- * after the ritual) no animal appears on its own any more in the overworld: the
- * only animals left are the ones players kept alive underground, and their young.
+ * after a ritual done past 100%) no animal appears on its own any more in the
+ * overworld: the only animals left are the ones players kept alive underground,
+ * and their young.
  *
  * Works for animals added by other mods too: they are recognised by their spawn
  * category (or class) and stopped through Forge's spawn events, which natural
  * spawning, world generation, structures, spawners and the other vanilla spawn
  * paths go through (as do mods that spawn through EntityType or Forge's event
- * factory). Spawns caused by players or by the animals themselves (breeding, eggs,
- * buckets, spawn eggs, commands, conversions) are left alone. New bee nests come
- * without bees (see BeehiveDecoratorMixin).
+ * factory, see also MobMixin). Breeding, eggs, buckets, spawn eggs, dispensers,
+ * commands and conversions are left alone; any other spawn of an animal is refused,
+ * summons made by other mods included. New bee nests come without bees (see
+ * BeehiveDecoratorMixin).
  */
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class AnimalExtinctionHandler {
+
+    // True while a bee nest decorator fills a new nest that must stay empty (per thread:
+    // trees grow on the server thread and on world generation threads)
+    public static final ThreadLocal<Boolean> EMPTY_NEW_NESTS = ThreadLocal.withInitial(() -> false);
 
     /**
      * Natural spawning and world generation: refused before the mob is even created.
@@ -54,12 +61,23 @@ public class AnimalExtinctionHandler {
     /**
      * Every other spawn path (spawners, structures, jockeys, wandering trader llamas,
      * skeleton traps...): the spawn is cancelled and the mob never joins the world.
+     * Also when another mod cancelled the event (that only skips the mob's setup).
      */
-    @SubscribeEvent
+    @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void onFinalizeSpawn(MobSpawnEvent.FinalizeSpawn event) {
-        if (blocksSpawn(event.getLevel(), event.getSpawnType(), event.getEntity())) {
+        // A mob already in the world can no longer be refused (Forge would throw)
+        if (!event.getEntity().isAddedToWorld()
+                && blocksSpawn(event.getLevel(), event.getSpawnType(), event.getEntity())) {
             event.setSpawnCancelled(true);
         }
+    }
+
+    /**
+     * Natural spawning of the animal categories is not even attempted (it would only
+     * be refused, every tick, since their mob caps never fill). See NaturalSpawnerMixin.
+     */
+    public static boolean skipsNaturalSpawning(Level level, MobCategory category) {
+        return isExtinct() && level.dimension() == Level.OVERWORLD && isAnimalCategory(category);
     }
 
     /**
@@ -81,15 +99,20 @@ public class AnimalExtinctionHandler {
             event.setCanceled(true);
         }
 
-        // A refused mount (chicken jockey, skeleton trap horse): let its riders go, or
-        // they would stay frozen on a mount that is not in the world
-        if (event.isCanceled() && mob.isSpawnCancelled() && mob.isVehicle()) {
-            mob.ejectPassengers();
+        // An animal refused here: a mount (chicken jockey, skeleton trap horse) lets its
+        // riders go, a rider (baby strider jockey) leaves its mount, or they would stay
+        // attached to a mob that is not in the world
+        if (event.isCanceled() && mob.isSpawnCancelled() && isExtinctIn(event.getLevel()) && isAnimal(mob)) {
+            if (mob.isVehicle())
+                mob.ejectPassengers();
+            if (mob.isPassenger())
+                mob.stopRiding();
         }
     }
 
     private static boolean isBlockedSpawn(ServerLevelAccessor level, MobSpawnType spawnType) {
-        if (!isExtinct() || level.getLevel().dimension() != Level.OVERWORLD) {
+        if (!isExtinct() || spawnType == null || level == null || level.getLevel() == null
+                || level.getLevel().dimension() != Level.OVERWORLD) {
             return false;
         }
 
@@ -107,11 +130,14 @@ public class AnimalExtinctionHandler {
     }
 
     /**
-     * From the day the apocalypse reaches 100% on (the ritual lowers apocalypseMaxDays
-     * to the day before, so it counts as well).
+     * From the day the apocalypse reaches 100% on, also once it is over. A ritual done
+     * before 100% leaves the animals alone (apocalypseActive is set the day 100% is
+     * reached and never cleared).
      */
     public static boolean isExtinct() {
-        return ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays;
+        return ConfigManager.apocalypseActive
+                || (ConfigManager.apocalypseCurrentDay < ConfigManager.apocalypseEndDay
+                        && ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays);
     }
 
     /**
@@ -129,7 +155,11 @@ public class AnimalExtinctionHandler {
     }
 
     private static boolean isAnimalCategory(EntityType<?> type) {
-        switch (type.getCategory()) {
+        return isAnimalCategory(type.getCategory());
+    }
+
+    private static boolean isAnimalCategory(MobCategory category) {
+        switch (category) {
             case CREATURE:
             case AMBIENT:
             case AXOLOTLS:
