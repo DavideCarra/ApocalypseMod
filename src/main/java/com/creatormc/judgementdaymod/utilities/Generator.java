@@ -441,6 +441,12 @@ public class Generator {
                 // Highest non air block of the column, read from the heightmap for the first
                 // step only: later steps follow the column themselves (see highestNonAir)
                 int topY = Integer.MIN_VALUE;
+                // Below the block changed by the previous step: everything above it down to
+                // there is air, ash or fire, so the search for the next solid block resumes
+                // there instead of going through the whole ash column again
+                int searchFrom = Integer.MAX_VALUE;
+                // Tick of the last ash placed in the column, not scheduled yet (see below)
+                BlockPos pendingAshTick = null;
 
                 for (int stepIndex = 0; stepIndex < thresholds.length; stepIndex++) {
                     final float apocalypseThreshold = thresholds[stepIndex];
@@ -480,7 +486,7 @@ public class Generator {
                     if (Analyzer.isSkippable(currentBlock)) {
                         boolean foundSolid = false;
 
-                        for (int y = topY - 1; y > minBuildHeight; y--) {
+                        for (int y = Math.min(topY - 1, searchFrom); y > minBuildHeight; y--) {
                             final int checkSecIndex = (y >> 4) - minSection;
                             if (checkSecIndex < 0 || checkSecIndex >= sectionsCount)
                                 break;
@@ -543,6 +549,26 @@ public class Generator {
 
                             BlockPos pos = new BlockPos(startX + lx, targetY, startZ + lz);
 
+                            // Block below an ash, read before anything else happens at pos (only
+                            // the removal of a block entity could change it, so not then): the
+                            // same block the falling check below would read
+                            BlockState belowState = newBlock == ashBlock && !oldState.hasBlockEntity()
+                                    ? level.getBlockState(pos.below())
+                                    : null;
+
+                            // The tick of the ash placed by the previous step, kept back until now:
+                            // dropped if this step puts an ash right under it that stays there,
+                            // since the tick would find a full block below and do nothing (this
+                            // leaves one tick per column after a catch up of many steps, as a
+                            // single step does). Otherwise scheduled, in the same order as before
+                            if (pendingAshTick != null) {
+                                if (belowState == null || targetY != pendingAshTick.getY() - 1
+                                        || FallingBlock.isFree(belowState)) {
+                                    level.scheduleTick(pendingAshTick, ashBlock, 1);
+                                }
+                                pendingAshTick = null;
+                            }
+
                             // The block is replaced without the usual block callbacks: drop its
                             // block entity too, or it would stay orphaned in the chunk
                             if (oldState.hasBlockEntity()) {
@@ -552,6 +578,7 @@ public class Generator {
                             targetSection.setBlockState(lx, finalLy, lz, newState, false);
                             dirtySection[finalSecIndex] = true;
                             hadChanges = true;
+                            searchFrom = targetY - 1;
 
                             // Light management (e.g. water or snow gone, ash in place of a slab)
                             if (newBlock != fireBlock
@@ -562,7 +589,18 @@ public class Generator {
 
                             // Schedule ticks inline
                             if (newBlock == ashBlock) {
-                                level.scheduleTick(pos, ashBlock, 1);
+                                if (belowState == null) {
+                                    belowState = level.getBlockState(pos.below());
+                                }
+                                // Handle falling blocks
+                                if (FallingBlock.isFree(belowState)) {
+                                    level.scheduleTick(pos, ashBlock, 1);
+                                    FallingBlockEntity.fall(level, pos, newState);
+                                    blockFell = true;
+                                } else {
+                                    // Scheduled by the next step of the column or after its last
+                                    pendingAshTick = pos;
+                                }
                             } else if (newBlock == fireBlock) {
                                 level.scheduleTick(pos, fireBlock, 1);
                             } else if (newBlock == null && Analyzer.isEvaporable(oldState)) {
@@ -574,16 +612,12 @@ public class Generator {
                                 waterNeighborsToUpdate.add(pos.above());
                                 waterNeighborsToUpdate.add(pos.below());
                             }
-                            // Handle falling blocks
-                            if (newState.getBlock() instanceof FallingBlock) {
-                                BlockPos belowPos = pos.below();
-                                if (FallingBlock.isFree(level.getBlockState(belowPos))) {
-                                    FallingBlockEntity.fall(level, pos, newState);
-                                    blockFell = true;
-                                }
-                            }
                         }
                     }
+                }
+
+                if (pendingAshTick != null) {
+                    level.scheduleTick(pendingAshTick, ashBlock, 1);
                 }
             }
         }

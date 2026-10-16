@@ -565,6 +565,18 @@ public class SelfTestCommon {
                     burnFires(level);
             }
             dumpRegions(level, "AFTER");
+            if ("true".equals(props.getProperty("dropAshOverAshTicks"))) {
+                // Old code only: drops the ash ticks that find ash below (they do nothing)
+                Block ash = net.minecraftforge.registries.ForgeRegistries.BLOCKS.getValue(new net.minecraft.resources.ResourceLocation("judgementday", "ash_block"));
+                for (int[] r : regions)
+                    for (int x = r[0] - 4; x <= r[0] + 4; x++)
+                        for (int z = r[1] - 4; z <= r[1] + 4; z++)
+                            ((net.minecraft.world.ticks.LevelChunkTicks<Block>) level.getChunk(x, z).getBlockTicks()).removeIf(
+                                    t -> t.type() == ash && t.triggerTick() == level.getGameTime() + 1
+                                            && level.getBlockState(t.pos()).is(ash) && level.getBlockState(t.pos().below()).is(ash));
+            }
+            if ("true".equals(props.getProperty("dumpTicks")))
+                dumpTicks(level);
             for (int[] r : regions)
                 for (int x = r[0] - 4; x <= r[0] + 4; x++)
                     for (int z = r[1] - 4; z <= r[1] + 4; z++)
@@ -585,6 +597,8 @@ public class SelfTestCommon {
         } else if (stage == 2 && tick >= waitUntil) {
             if (Integer.parseInt(props.getProperty("lightTicks", "0")) > 0) {
                 lightReport(level);
+                if ("true".equals(props.getProperty("dumpTicks")))
+                    dumpRegions(level, "LATER");
             }
             finish();
         }
@@ -673,6 +687,22 @@ public class SelfTestCommon {
                                 if (level.getBlockState(p).is(Blocks.FIRE))
                                     level.setBlock(p, air, 2 | 16);
                             }
+    }
+
+    /** Block ticks scheduled in the regions, in execution order (below = block under the tick). */
+    static void dumpTicks(ServerLevel level) {
+        List<net.minecraft.world.ticks.ScheduledTick<Block>> all = new ArrayList<>();
+        for (int[] r : regions)
+            for (int x = r[0] - 4; x <= r[0] + 4; x++)
+                for (int z = r[1] - 4; z <= r[1] + 4; z++)
+                    ((net.minecraft.world.ticks.LevelChunkTicks<Block>) level.getChunk(x, z).getBlockTicks()).getAll()
+                            .forEach(all::add);
+        all.sort(net.minecraft.world.ticks.ScheduledTick.DRAIN_ORDER);
+        for (net.minecraft.world.ticks.ScheduledTick<Block> t : all)
+            log("TICK " + t.pos().toShortString() + " " + net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(t.type())
+                    + " " + (t.triggerTick() - level.getGameTime()) + " " + t.priority()
+                    + " below=" + net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(level.getBlockState(t.pos().below()).getBlock()));
+        log("TICKS " + all.size());
     }
 
     static void dumpRegions(ServerLevel level, String tag) {

@@ -26,7 +26,10 @@ Scenarios:
   server light check (sky light above the surface, light of the fires).
   `againDay` processes again on a later day (must change nothing after the
   end). `burnFiresBetweenDays=true` and `hashFireAsAir=true` compare a
-  catch-up with a day by day run.
+  catch-up with a day by day run. `dumpTicks=true` lists the block ticks
+  scheduled by the processing and, with `lightTicks`, dumps the regions again
+  afterwards (`LATER`); `dropAshOverAshTicks=true` drops the ash ticks that
+  find ash below them (to compare the old code with the new one).
 - `clientlight`: logs in a fake player with a recording connection, lets the
   mod process the chunks it sees (`phaseChangeDay` simulates a phase change
   afterwards) and rebuilds the client light from the packets it received,
