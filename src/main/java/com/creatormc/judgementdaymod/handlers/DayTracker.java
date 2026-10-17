@@ -133,8 +133,10 @@ public class DayTracker {
             // Collections.shuffle(batch, ThreadLocalRandom.current());
             Collections.shuffle(batchToProcesses, ThreadLocalRandom.current());
 
-            // Process batch (their light checks are queued together at the end)
+            // Process batch (their light checks are queued together at the end, after the
+            // falling ash of their catch ups has landed)
             LightChecks.begin();
+            Generator.beginBatch();
             try {
                 for (ChunkToProcess task : batchToProcesses) {
                     ServerLevel lvl = task.getLevel();
@@ -147,6 +149,7 @@ public class DayTracker {
                     Generator.processChunk(task);
                 }
             } finally {
+                Generator.endBatch();
                 LightChecks.end();
             }
         }
@@ -163,6 +166,7 @@ public class DayTracker {
         chunksToProcess.clear();
         ChunkLightSync.clear();
         LightChecks.clear();
+        Generator.clearPendingFalls();
         Generator.resetState();
     }
 
@@ -172,6 +176,7 @@ public class DayTracker {
         chunksToProcess.clear();
         ChunkLightSync.clear();
         LightChecks.clear();
+        Generator.clearPendingFalls();
     }
 
     public static void enqueueChunk(ChunkToProcess c) {

@@ -74,6 +74,16 @@ public class SelfTestCommon {
         return props.getProperty("scenario");
     }
 
+    // Falling block entities created during the run
+    static int fallingJoined;
+
+    @SubscribeEvent
+    public static void onFallingJoin(net.minecraftforge.event.entity.EntityJoinLevelEvent e) {
+        if (e.getEntity() instanceof FallingBlockEntity && !e.getLevel().isClientSide) {
+            fallingJoined++;
+        }
+    }
+
     @SubscribeEvent
     public static void onStarted(ServerStartedEvent event) {
         if (!enabled())
@@ -557,10 +567,13 @@ public class SelfTestCommon {
             String[] days = props.getProperty("days", props.getProperty("day", "50")).split(",");
             for (String d : days) {
                 ConfigManager.apocalypseCurrentDay = Integer.parseInt(d.trim());
+                // All the chunks of a day as one batch, when the code has batches
+                batch("beginBatch");
                 for (int[] r : regions)
                     for (int x = r[0] - 2; x <= r[0] + 2; x++)
                         for (int z = r[1] - 2; z <= r[1] + 2; z++)
                             Generator.processChunk(new ChunkToProcess(level, x, z));
+                batch("endBatch");
                 if ("true".equals(props.getProperty("burnFiresBetweenDays")))
                     burnFires(level);
             }
@@ -601,6 +614,16 @@ public class SelfTestCommon {
                     dumpRegions(level, "LATER");
             }
             finish();
+        }
+    }
+
+    static void batch(String method) {
+        try {
+            Generator.class.getMethod(method).invoke(null);
+        } catch (NoSuchMethodException e) {
+            // older code: no batches
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -752,6 +775,22 @@ public class SelfTestCommon {
         }
         log(tag + " TOTAL " + Long.toHexString(total));
 
+        // Optional count of every block state per chunk: dumpCounts=true
+        if ("true".equals(props.getProperty("dumpCounts"))) {
+            for (int[] r : regions)
+                for (int x = r[0] - 3; x <= r[0] + 3; x++)
+                    for (int z = r[1] - 3; z <= r[1] + 3; z++) {
+                        java.util.TreeMap<String, Integer> counts = new java.util.TreeMap<>();
+                        LevelChunk chunk = level.getChunk(x, z);
+                        for (LevelChunkSection sec : chunk.getSections())
+                            for (int ly = 0; ly < 16; ly++)
+                                for (int lz = 0; lz < 16; lz++)
+                                    for (int lx = 0; lx < 16; lx++)
+                                        counts.merge(sec.getBlockState(lx, ly, lz).toString(), 1, Integer::sum);
+                        log(tag + " N " + x + " " + z + " " + counts);
+                    }
+        }
+
         // Optional block by block dump: dumpChunks=x:z;x:z  dumpY=min:max
         String dc = props.getProperty("dumpChunks");
         if (dc != null) {
@@ -811,6 +850,7 @@ public class SelfTestCommon {
     }
 
     static void finish() {
+        log("FALLING joined=" + fallingJoined);
         try {
             Files.write(FMLPaths.GAMEDIR.get().resolve(props.getProperty("output", "selftest-out.txt")), out);
         } catch (IOException e) {
