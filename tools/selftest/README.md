@@ -26,7 +26,13 @@ Scenarios:
   server light check (sky light above the surface, light of the fires).
   `againDay` processes again on a later day (must change nothing after the
   end). `burnFiresBetweenDays=true` and `hashFireAsAir=true` compare a
-  catch-up with a day by day run.
+  catch-up with a day by day run. `dumpTicks=true` lists the block ticks
+  scheduled by the processing and, with `lightTicks`, dumps the regions again
+  afterwards (`LATER`); `dropAshOverAshTicks=true` drops the ash ticks that
+  find ash below them (to compare the old code with the new one).
+  `dumpCounts=true` adds the count of every block state per chunk (`N`
+  lines). The chunks of a day are processed as one batch when the code has
+  batches (`Generator.beginBatch`), as `DayTracker` does.
 - `clientlight`: logs in a fake player with a recording connection, lets the
   mod process the chunks it sees (`phaseChangeDay` simulates a phase change
   afterwards) and rebuilds the client light from the packets it received,
@@ -46,6 +52,8 @@ Scenarios:
 - `logic`: checks of the new behaviour (steps, restart, ritual, old configs,
   light sync, animal spawning, breeding, mobs left in unattended areas).
   Prints PASS/FAIL lines and `RESULT fails=N`.
+
+Every run ends with `FALLING joined=N`, the falling block entities created.
 
 Use `PORT=<port>` to run several servers at once (results that depend on the
 first ticks after loading can then vary under load; repeat the run).

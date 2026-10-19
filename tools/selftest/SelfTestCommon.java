@@ -74,6 +74,16 @@ public class SelfTestCommon {
         return props.getProperty("scenario");
     }
 
+    // Falling block entities created during the run
+    static int fallingJoined;
+
+    @SubscribeEvent
+    public static void onFallingJoin(net.minecraftforge.event.entity.EntityJoinLevelEvent e) {
+        if (e.getEntity() instanceof FallingBlockEntity && !e.getLevel().isClientSide) {
+            fallingJoined++;
+        }
+    }
+
     @SubscribeEvent
     public static void onStarted(ServerStartedEvent event) {
         if (!enabled())
@@ -557,14 +567,29 @@ public class SelfTestCommon {
             String[] days = props.getProperty("days", props.getProperty("day", "50")).split(",");
             for (String d : days) {
                 ConfigManager.apocalypseCurrentDay = Integer.parseInt(d.trim());
+                // All the chunks of a day as one batch, when the code has batches
+                batch("beginBatch");
                 for (int[] r : regions)
                     for (int x = r[0] - 2; x <= r[0] + 2; x++)
                         for (int z = r[1] - 2; z <= r[1] + 2; z++)
                             Generator.processChunk(new ChunkToProcess(level, x, z));
+                batch("endBatch");
                 if ("true".equals(props.getProperty("burnFiresBetweenDays")))
                     burnFires(level);
             }
             dumpRegions(level, "AFTER");
+            if ("true".equals(props.getProperty("dropAshOverAshTicks"))) {
+                // Old code only: drops the ash ticks that find ash below (they do nothing)
+                Block ash = net.minecraftforge.registries.ForgeRegistries.BLOCKS.getValue(new net.minecraft.resources.ResourceLocation("judgementday", "ash_block"));
+                for (int[] r : regions)
+                    for (int x = r[0] - 4; x <= r[0] + 4; x++)
+                        for (int z = r[1] - 4; z <= r[1] + 4; z++)
+                            ((net.minecraft.world.ticks.LevelChunkTicks<Block>) level.getChunk(x, z).getBlockTicks()).removeIf(
+                                    t -> t.type() == ash && t.triggerTick() == level.getGameTime() + 1
+                                            && level.getBlockState(t.pos()).is(ash) && level.getBlockState(t.pos().below()).is(ash));
+            }
+            if ("true".equals(props.getProperty("dumpTicks")))
+                dumpTicks(level);
             for (int[] r : regions)
                 for (int x = r[0] - 4; x <= r[0] + 4; x++)
                     for (int z = r[1] - 4; z <= r[1] + 4; z++)
@@ -585,8 +610,20 @@ public class SelfTestCommon {
         } else if (stage == 2 && tick >= waitUntil) {
             if (Integer.parseInt(props.getProperty("lightTicks", "0")) > 0) {
                 lightReport(level);
+                if ("true".equals(props.getProperty("dumpTicks")))
+                    dumpRegions(level, "LATER");
             }
             finish();
+        }
+    }
+
+    static void batch(String method) {
+        try {
+            Generator.class.getMethod(method).invoke(null);
+        } catch (NoSuchMethodException e) {
+            // older code: no batches
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -675,6 +712,22 @@ public class SelfTestCommon {
                             }
     }
 
+    /** Block ticks scheduled in the regions, in execution order (below = block under the tick). */
+    static void dumpTicks(ServerLevel level) {
+        List<net.minecraft.world.ticks.ScheduledTick<Block>> all = new ArrayList<>();
+        for (int[] r : regions)
+            for (int x = r[0] - 4; x <= r[0] + 4; x++)
+                for (int z = r[1] - 4; z <= r[1] + 4; z++)
+                    ((net.minecraft.world.ticks.LevelChunkTicks<Block>) level.getChunk(x, z).getBlockTicks()).getAll()
+                            .forEach(all::add);
+        all.sort(net.minecraft.world.ticks.ScheduledTick.DRAIN_ORDER);
+        for (net.minecraft.world.ticks.ScheduledTick<Block> t : all)
+            log("TICK " + t.pos().toShortString() + " " + net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(t.type())
+                    + " " + (t.triggerTick() - level.getGameTime()) + " " + t.priority()
+                    + " below=" + net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(level.getBlockState(t.pos().below()).getBlock()));
+        log("TICKS " + all.size());
+    }
+
     static void dumpRegions(ServerLevel level, String tag) {
         final boolean fireAsAir = "true".equals(props.getProperty("hashFireAsAir"));
         final int airId = Block.getId(Blocks.AIR.defaultBlockState());
@@ -721,6 +774,22 @@ public class SelfTestCommon {
             log(tag + " FALLING " + r[0] + " " + r[1] + " " + falling);
         }
         log(tag + " TOTAL " + Long.toHexString(total));
+
+        // Optional count of every block state per chunk: dumpCounts=true
+        if ("true".equals(props.getProperty("dumpCounts"))) {
+            for (int[] r : regions)
+                for (int x = r[0] - 3; x <= r[0] + 3; x++)
+                    for (int z = r[1] - 3; z <= r[1] + 3; z++) {
+                        java.util.TreeMap<String, Integer> counts = new java.util.TreeMap<>();
+                        LevelChunk chunk = level.getChunk(x, z);
+                        for (LevelChunkSection sec : chunk.getSections())
+                            for (int ly = 0; ly < 16; ly++)
+                                for (int lz = 0; lz < 16; lz++)
+                                    for (int lx = 0; lx < 16; lx++)
+                                        counts.merge(sec.getBlockState(lx, ly, lz).toString(), 1, Integer::sum);
+                        log(tag + " N " + x + " " + z + " " + counts);
+                    }
+        }
 
         // Optional block by block dump: dumpChunks=x:z;x:z  dumpY=min:max
         String dc = props.getProperty("dumpChunks");
@@ -781,6 +850,7 @@ public class SelfTestCommon {
     }
 
     static void finish() {
+        log("FALLING joined=" + fallingJoined);
         try {
             Files.write(FMLPaths.GAMEDIR.get().resolve(props.getProperty("output", "selftest-out.txt")), out);
         } catch (IOException e) {
