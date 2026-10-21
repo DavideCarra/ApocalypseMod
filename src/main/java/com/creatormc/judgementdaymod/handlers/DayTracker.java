@@ -13,6 +13,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.server.MinecraftServer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -37,6 +38,8 @@ public class DayTracker {
 
     // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
+    // Chunks of a batch left for the next tick, processed before the queue (server thread)
+    private static final ArrayDeque<ChunkToProcess> carriedOver = new ArrayDeque<>();
 
     @SubscribeEvent(priority = EventPriority.LOW)
     public static void onChunkWatch(ChunkWatchEvent.Watch event) {
@@ -114,15 +117,15 @@ public class DayTracker {
         }
 
         // Nothing queued: skip the batch allocation
-        if (chunksToProcess.isEmpty())
+        if (chunksToProcess.isEmpty() && carriedOver.isEmpty())
             return;
 
         // --- PROCESS MULTI-CHUNK BATCH PER TICK + SHUFFLE ---
-        // Pull up to N tasks from the queue
+        // Pull up to N tasks, the ones left by the last tick first
         List<ChunkToProcess> batchToProcesses = new ArrayList<>(CHUNKS_PER_TICK);
 
         for (int i = 0; i < CHUNKS_PER_TICK; i++) {
-            ChunkToProcess next = chunksToProcess.poll();
+            ChunkToProcess next = carriedOver.isEmpty() ? chunksToProcess.poll() : carriedOver.poll();
             if (next == null)
                 break;
             batchToProcesses.add(next);
@@ -138,15 +141,24 @@ public class DayTracker {
             LightChecks.begin();
             Generator.beginBatch();
             try {
-                for (ChunkToProcess task : batchToProcesses) {
+                // At most the work of N chunks processed on time: a catch up of many steps
+                // counts as several chunks, the rest of the batch waits for the next tick
+                float work = 0;
+                for (int i = 0; i < batchToProcesses.size(); i++) {
+                    if (work >= CHUNKS_PER_TICK) {
+                        carriedOver.addAll(batchToProcesses.subList(i, batchToProcesses.size()));
+                        break;
+                    }
+                    ChunkToProcess task = batchToProcesses.get(i);
                     ServerLevel lvl = task.getLevel();
                     if (lvl == null || !lvl.getServer().isSameThread()
                             || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+                        work++;
                         continue;
                     }
 
                     // Do the work
-                    Generator.processChunk(task);
+                    work += Generator.processChunk(task);
                 }
             } finally {
                 Generator.endBatch();
@@ -164,6 +176,7 @@ public class DayTracker {
         tickCount = 0;
         lastDayTime = -1;
         chunksToProcess.clear();
+        carriedOver.clear();
         ChunkLightSync.clear();
         LightChecks.clear();
         Generator.clearPendingFalls();
@@ -174,6 +187,7 @@ public class DayTracker {
     public static void onServerStopped(ServerStoppedEvent event) {
         // Drop references to the stopped world so it can be garbage collected
         chunksToProcess.clear();
+        carriedOver.clear();
         ChunkLightSync.clear();
         LightChecks.clear();
         Generator.clearPendingFalls();
