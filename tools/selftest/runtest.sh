@@ -34,6 +34,14 @@ minDamageHeight=60
 minWaterEvaporationHeight=60
 startBeforeApocalypse=false
 EOP
+# Settings of new worlds (each world gets its own config, see ConfigManager)
+cat > "$R/config/judgementdaymod-defaults.properties" <<EOP
+apocalypseMaxDays=50
+apocalypseEndDay=200
+minDamageHeight=60
+minWaterEvaporationHeight=60
+startBeforeApocalypse=false
+EOP
 case "$MODE" in
   fresh) rm -rf "${R:?}/world" ;;
   copy:*) rm -rf "${R:?}/world"; cp -r "${MODE#copy:}" "$R/world" ;;

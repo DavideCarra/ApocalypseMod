@@ -1,8 +1,8 @@
 package com.creatormc.judgementdaymod.handlers;
 
+import com.creatormc.judgementdaymod.models.ClientApocalypseData;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
-import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.*;
 import com.mojang.math.Axis;
@@ -36,7 +36,7 @@ public class BigSunRenderer {
             return;
 
         boolean isAboveDamageLimit;
-        int yThreshold = ConfigManager.minDamageHeight; // reference height
+        int yThreshold = ClientApocalypseData.damageHeight; // reference height
 
         if (player.getY() >= yThreshold) {
             // Above height: filter always active
@@ -46,7 +46,7 @@ public class BigSunRenderer {
             isAboveDamageLimit = level.canSeeSky(player.blockPosition());
         }
         // If apocalypse is over, do not change sun rendering
-        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay) {
+        if (ClientApocalypseData.currentDay >= ClientApocalypseData.endDay) {
             return;
         }
 
@@ -64,7 +64,7 @@ public class BigSunRenderer {
         poseStack.mulPose(Axis.XP.rotationDegrees(sunAngle));
 
         // === Dynamic parameters based on phase ===
-        float stage = (float) Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
+        float stage = (float) Phase.toPercent(ClientApocalypseData.currentDay, ClientApocalypseData.maxDays);
         float factor = stage / 100.0F;
         long time = level.getGameTime();
         float pulse = 1.0F; // base value

@@ -93,6 +93,18 @@ public class SelfTestNew {
     public static void onTick(TickEvent.ServerTickEvent event) {
         if (SelfTestCommon.server == null || event.phase != TickEvent.Phase.END)
             return;
+        if (SelfTestCommon.enabled() && "multiplayer".equals(SelfTestCommon.scenario())) {
+            try {
+                multiplayerTick();
+            } catch (Throwable t) {
+                SelfTestCommon.log("EXCEPTION " + t);
+                for (StackTraceElement el : t.getStackTrace())
+                    SelfTestCommon.log("   at " + el);
+                fails++;
+                SelfTestCommon.finish();
+            }
+            return;
+        }
         if (!(SelfTestCommon.enabled() && "logic".equals(SelfTestCommon.scenario())))
             return;
         try {
@@ -103,6 +115,213 @@ public class SelfTestNew {
                 SelfTestCommon.log("   at " + el);
             fails++;
             SelfTestCommon.finish();
+        }
+    }
+
+    // ---------------------------------------------------------------- multiplayer
+
+    /** A player logged in through a recording connection: what the mod sends it. */
+    static final class Recorded {
+        final net.minecraft.server.level.ServerPlayer player;
+        final io.netty.channel.embedded.EmbeddedChannel channel;
+        final List<String> events = new ArrayList<>();
+
+        Recorded(net.minecraft.server.level.ServerPlayer player, io.netty.channel.embedded.EmbeddedChannel channel) {
+            this.player = player;
+            this.channel = channel;
+        }
+
+        void drain() {
+            Object msg;
+            while ((msg = channel.readOutbound()) != null)
+                record(msg);
+        }
+
+        void record(Object msg) {
+            if (msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket bundle) {
+                for (Object sub : bundle.subPackets())
+                    record(sub);
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket payload
+                    && payload.getIdentifier().getNamespace().equals("judgementday")) {
+                net.minecraft.network.FriendlyByteBuf buf = new net.minecraft.network.FriendlyByteBuf(payload.getData().copy());
+                int index = buf.readUnsignedByte();
+                if (index == 1)
+                    events.add("SYNC day=" + buf.readInt() + " max=" + buf.readInt() + " end=" + buf.readInt()
+                            + " damage=" + buf.readInt() + " active=" + buf.readBoolean() + " delayed=" + buf.readBoolean()
+                            + " dayCounter=" + buf.readBoolean() + " heatBar=" + buf.readBoolean());
+                else if (index == 2)
+                    events.add("TITLE " + buf.readEnum(com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase.class));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundStopSoundPacket) {
+                events.add("STOPSOUND");
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket sound) {
+                events.add("SOUND " + sound.getSound().unwrapKey().map(k -> k.location().toString()).orElse("?"));
+            }
+        }
+
+        boolean has(String prefix) {
+            for (String e : events)
+                if (e.startsWith(prefix))
+                    return true;
+            return false;
+        }
+    }
+
+    static final List<Recorded> players = new ArrayList<>();
+    static int mpDayBefore;
+
+    static Recorded join(ServerLevel level, String name, int x) {
+        com.mojang.authlib.GameProfile profile = new com.mojang.authlib.GameProfile(UUID.nameUUIDFromBytes(name.getBytes()), name);
+        net.minecraft.server.level.ServerPlayer player = new net.minecraft.server.level.ServerPlayer(SelfTestCommon.server, level, profile);
+        player.moveTo(x, 200, 0, 0, 0);
+        net.minecraft.network.Connection conn = new net.minecraft.network.Connection(net.minecraft.network.protocol.PacketFlow.SERVERBOUND);
+        io.netty.channel.embedded.EmbeddedChannel channel = new io.netty.channel.embedded.EmbeddedChannel(conn);
+        SelfTestCommon.server.getPlayerList().placeNewPlayer(conn, player);
+        Recorded r = new Recorded(player, channel);
+        players.add(r);
+        return r;
+    }
+
+    static void multiplayerTick() throws Exception {
+        int tick = SelfTestCommon.tick;
+        ServerLevel level = SelfTestCommon.server.getLevel(Level.OVERWORLD);
+        for (Recorded r : players)
+            r.drain();
+        if (stage == 0 && tick >= 20) {
+            SelfTestCommon.freezeWorld(level); // the clock only moves when the test sets it
+            worldConfigs();
+            defaults();
+            ConfigManager.apocalypseCurrentDay = 9; // phase 1 starts on day 10 (50 days)
+            Generator.resetState();
+            level.setDayTime(1000);
+            join(level, "PlayerOne", 0);
+            join(level, "PlayerTwo", 400);
+            stage = 1;
+            waitUntil = tick + 5;
+        } else if (stage == 1 && tick >= waitUntil) {
+            for (Recorded r : players)
+                check("multiplayer: " + r.player.getGameProfile().getName() + " gets the state on login",
+                        r.has("SYNC day=9 max=50 end=200 damage=60 active=false"), r.events.toString());
+            for (Recorded r : players)
+                r.events.clear();
+            // Two days of normal play left: a new day does not count
+            ConfigManager.startDelayDays = 2;
+            level.setDayTime(23990);
+            stage = 10;
+            waitUntil = tick + 2;
+        } else if (stage == 10 && tick >= waitUntil) {
+            level.setDayTime(24010);
+            stage = 11;
+            waitUntil = tick + 5;
+        } else if (stage == 11 && tick >= waitUntil) {
+            check("delay: the day stays put", ConfigManager.apocalypseCurrentDay == 9 && ConfigManager.startDelayDays == 1,
+                    "day=" + ConfigManager.apocalypseCurrentDay + " delay=" + ConfigManager.startDelayDays);
+            for (Recorded r : players)
+                check("delay: " + r.player.getGameProfile().getName() + " hides the day counter",
+                        r.has("SYNC day=9 max=50 end=200 damage=60 active=false delayed=true"), r.events.toString());
+            for (Recorded r : players)
+                r.events.clear();
+            ConfigManager.startDelayDays = 0;
+            ConfigManager.showHeatBar = false; // the server hides the heat bar
+            level.setDayTime(47990);
+            stage = 2;
+            waitUntil = tick + 2;
+        } else if (stage == 2 && tick >= waitUntil) {
+            level.setDayTime(48010); // a new day
+            stage = 3;
+            waitUntil = tick + 5;
+        } else if (stage == 3 && tick >= waitUntil) {
+            check("multiplayer: the day changes once", ConfigManager.apocalypseCurrentDay == 10, "day=" + ConfigManager.apocalypseCurrentDay);
+            for (Recorded r : players) {
+                String n = r.player.getGameProfile().getName();
+                check("multiplayer: " + n + " gets the new day", r.has("SYNC day=10 max=50 end=200 damage=48 active=false delayed=false dayCounter=true heatBar=false"), r.events.toString());
+                check("multiplayer: " + n + " gets the phase title", r.has("TITLE PHASE_2"), r.events.toString());
+                check("multiplayer: " + n + " gets the phase music", r.has("STOPSOUND") && r.has("SOUND "), r.events.toString());
+            }
+            SelfTestCommon.log("MP events " + players.get(0).events);
+            // Everybody leaves: the days go on
+            for (Recorded r : players)
+                SelfTestCommon.server.getPlayerList().remove(r.player);
+            players.clear();
+            mpDayBefore = ConfigManager.apocalypseCurrentDay;
+            level.setDayTime(71990);
+            stage = 4;
+            waitUntil = tick + 2;
+        } else if (stage == 4 && tick >= waitUntil) {
+            level.setDayTime(72010);
+            stage = 5;
+            waitUntil = tick + 5;
+        } else if (stage == 5 && tick >= waitUntil) {
+            check("multiplayer: days go on with nobody online", ConfigManager.apocalypseCurrentDay == mpDayBefore + 1,
+                    "before=" + mpDayBefore + " now=" + ConfigManager.apocalypseCurrentDay);
+            ConfigManager.showHeatBar = true;
+            defaults();
+            SelfTestCommon.log("RESULT fails=" + fails);
+            SelfTestCommon.finish();
+        }
+    }
+
+    /** Each world has its own config: created for a new world, taken over for an old one. */
+    static void worldConfigs() throws Exception {
+        java.nio.file.Path world = SelfTestCommon.server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT);
+        java.nio.file.Path own = world.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties");
+        check("config: the world has its own config", java.nio.file.Files.exists(own), own.toString());
+
+        java.nio.file.Path base = net.minecraftforge.fml.loading.FMLPaths.GAMEDIR.get().resolve("cfgtest");
+        deleteTree(base);
+        java.nio.file.Path shared = net.minecraftforge.fml.loading.FMLPaths.CONFIGDIR.get().resolve("judgementdaymod-apocalypse.properties");
+        String sharedBefore = java.nio.file.Files.readString(shared);
+        try {
+            // Old shared config of a world on day 77
+            java.nio.file.Files.writeString(shared, "apocalypseCurrentDay=77\napocalypseMaxDays=40\napocalypseEndDay=150\nminDamageHeight=30\nminWaterEvaporationHeight=30\nstartBeforeApocalypse=false\nlastAppliedPhase=5\napocalypseActive=true\n");
+
+            // A new world: day 0 and the settings of the defaults file
+            java.nio.file.Path fresh = base.resolve("fresh");
+            java.nio.file.Files.createDirectories(fresh);
+            ConfigManager.load(fresh);
+            check("config: a new world starts on day 0 with the defaults", ConfigManager.apocalypseCurrentDay == 0
+                    && ConfigManager.apocalypseMaxDays == 50 && !ConfigManager.apocalypseActive
+                    && java.nio.file.Files.exists(fresh.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties")),
+                    "day=" + ConfigManager.apocalypseCurrentDay + " max=" + ConfigManager.apocalypseMaxDays + " active=" + ConfigManager.apocalypseActive);
+
+            // A world the mod ran in before: carries on from the old shared config
+            java.nio.file.Path old = base.resolve("old");
+            java.nio.file.Files.createDirectories(old.resolve("data"));
+            java.nio.file.Files.writeString(old.resolve("data").resolve("judgementday_chunkdata.dat"), "");
+            ConfigManager.load(old);
+            check("config: an old world carries on from the shared config", ConfigManager.apocalypseCurrentDay == 77
+                    && ConfigManager.apocalypseMaxDays == 40 && ConfigManager.apocalypseActive && ConfigManager.lastAppliedPhase == 5,
+                    "day=" + ConfigManager.apocalypseCurrentDay + " max=" + ConfigManager.apocalypseMaxDays);
+
+            // Then each world keeps its own state
+            ConfigManager.apocalypseCurrentDay = 78;
+            ConfigManager.save();
+            ConfigManager.load(fresh);
+            int freshDay = ConfigManager.apocalypseCurrentDay;
+            ConfigManager.load(old);
+            check("config: each world keeps its own day", freshDay == 0 && ConfigManager.apocalypseCurrentDay == 78,
+                    "fresh=" + freshDay + " old=" + ConfigManager.apocalypseCurrentDay);
+
+            // An invalid value is ignored (the default stays)
+            java.nio.file.Files.writeString(fresh.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties"),
+                    "apocalypseMaxDays=abc\napocalypseCurrentDay=3\nstartBeforeApocalypse=false\nstartDelayDays=4\nshowHeatBar=false\n");
+            ConfigManager.load(fresh);
+            check("config: invalid values ignored, new settings read", ConfigManager.apocalypseMaxDays == 50
+                    && ConfigManager.apocalypseCurrentDay == 3 && ConfigManager.startDelayDays == 4 && !ConfigManager.showHeatBar,
+                    "max=" + ConfigManager.apocalypseMaxDays + " day=" + ConfigManager.apocalypseCurrentDay
+                            + " delay=" + ConfigManager.startDelayDays + " heat=" + ConfigManager.showHeatBar);
+        } finally {
+            java.nio.file.Files.writeString(shared, sharedBefore);
+            ConfigManager.load(world);
+            deleteTree(base);
+        }
+    }
+
+    static void deleteTree(java.nio.file.Path dir) throws java.io.IOException {
+        if (!java.nio.file.Files.exists(dir))
+            return;
+        try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(dir)) {
+            for (java.nio.file.Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList())
+                java.nio.file.Files.delete(p);
         }
     }
 
@@ -217,30 +436,30 @@ public class SelfTestNew {
         check("legacy lastAppliedPhase derived", ConfigManager.lastAppliedPhase == 2,
                 "got " + ConfigManager.lastAppliedPhase);
         ConfigManager.apocalypseCurrentDay = 27;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("restart keeps heights", ConfigManager.minDamageHeight == 30 && ConfigManager.minWaterEvaporationHeight == 30,
                 "damage=" + ConfigManager.minDamageHeight + " water=" + ConfigManager.minWaterEvaporationHeight);
 
         // Second restart on the same phase
         Generator.resetState();
         ConfigManager.apocalypseCurrentDay = 28;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("second restart keeps heights", ConfigManager.minDamageHeight == 30, "damage=" + ConfigManager.minDamageHeight);
 
         // Next phase is applied once (30 - 3 * 6 = 12)
         ConfigManager.apocalypseCurrentDay = 30;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("next phase applied", ConfigManager.minDamageHeight == 12 && ConfigManager.lastAppliedPhase == 3,
                 "damage=" + ConfigManager.minDamageHeight + " phase=" + ConfigManager.lastAppliedPhase);
         Generator.resetState();
         ConfigManager.apocalypseCurrentDay = 31;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("phase not applied twice after restart", ConfigManager.minDamageHeight == 12, "damage=" + ConfigManager.minDamageHeight);
 
         // Fresh world: day 0 -> the first day change enters phase 0 (title/music), heights unchanged
         defaults();
         ConfigManager.apocalypseCurrentDay = 1;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("fresh world enters phase 0 on day 1", ConfigManager.lastAppliedPhase == 0 && ConfigManager.minDamageHeight == 60,
                 "phase=" + ConfigManager.lastAppliedPhase + " damage=" + ConfigManager.minDamageHeight);
 
@@ -263,7 +482,7 @@ public class SelfTestNew {
                 Generator.resetState();
                 for (int day = -2; day <= 25; day++) {
                     ConfigManager.apocalypseCurrentDay = day;
-                    Generator.handleDayEvent(player);
+                    Generator.handleDayEvent();
                     Generator.currentStep();
                 }
             }
@@ -431,10 +650,19 @@ public class SelfTestNew {
         Entity command = EntityType.COW.spawn(level, grass, MobSpawnType.COMMAND);
         Entity zombie = EntityType.ZOMBIE.spawn(level, grass, MobSpawnType.SPAWNER);
         Entity villager = EntityType.VILLAGER.spawn(level, grass, MobSpawnType.STRUCTURE);
+        Entity summoned = EntityType.COW.spawn(level, grass, MobSpawnType.MOB_SUMMONED);
+        Entity triggered = EntityType.COW.spawn(level, grass, MobSpawnType.TRIGGERED);
+        Entity natural = EntityType.COW.spawn(level, grass, MobSpawnType.NATURAL);
         check("structure cow blocked after end", structure == null || !structure.isAddedToWorld(), "");
         check("spawner cow blocked after end", spawner == null || !spawner.isAddedToWorld(), "");
+        check("natural cow blocked after end", natural == null || !natural.isAddedToWorld(), "");
         check("spawn egg cow allowed", egg != null && egg.isAddedToWorld(), "");
         check("command cow allowed", command != null && command.isAddedToWorld(), "");
+        check("summoned cow allowed (another mod's ritual)", summoned != null && summoned.isAddedToWorld(), "");
+        check("triggered cow allowed", triggered != null && triggered.isAddedToWorld(), "");
+        for (Entity e : new Entity[] { summoned, triggered })
+            if (e != null && e.isAddedToWorld())
+                e.discard();
         check("spawner zombie allowed", zombie != null && zombie.isAddedToWorld(), "");
         check("structure villager allowed", villager != null && villager.isAddedToWorld(), "");
         if (zombie != null)
@@ -580,12 +808,20 @@ public class SelfTestNew {
                 + " vehicle=" + zombie.getVehicle());
         zombie.discard();
 
-        // Lightning trap horse
+        // Skeleton horses are undead: the lightning trap and the horses of its riders appear
         net.minecraft.world.entity.animal.horse.SkeletonHorse horse = EntityType.SKELETON_HORSE.create(level);
         horse.setTrap(true);
         horse.moveTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0, 0);
         level.addFreshEntity(horse);
-        check("trap horse refused after 100%", !horse.isAddedToWorld(), "");
+        Entity riderHorse = EntityType.SKELETON_HORSE.spawn(level, pos, MobSpawnType.TRIGGERED);
+        Entity structureHorse = EntityType.SKELETON_HORSE.spawn(level, pos, MobSpawnType.STRUCTURE);
+        check("skeleton horses allowed after 100% (trap included)", horse.isAddedToWorld()
+                && riderHorse != null && riderHorse.isAddedToWorld() && structureHorse != null && structureHorse.isAddedToWorld(),
+                "trap=" + horse.isAddedToWorld() + " rider=" + (riderHorse != null && riderHorse.isAddedToWorld())
+                        + " structure=" + (structureHorse != null && structureHorse.isAddedToWorld()));
+        for (Entity e : new Entity[] { horse, riderHorse, structureHorse })
+            if (e != null && e.isAddedToWorld())
+                e.discard();
 
         // New bee nests: empty from 100% on, with bees before
         check("bee nest empty after the end", beeNest(level, pos.offset(0, 0, 0)) == 0, "");

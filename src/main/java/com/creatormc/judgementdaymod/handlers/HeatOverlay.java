@@ -1,5 +1,6 @@
 package com.creatormc.judgementdaymod.handlers;
 
+import com.creatormc.judgementdaymod.models.ClientConfig;
 import com.creatormc.judgementdaymod.models.ClientHeatData;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import net.minecraft.client.Minecraft;
@@ -17,7 +18,8 @@ public class HeatOverlay {
     public static void onRenderOverlay(RenderGuiOverlayEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null)
+        // If this player and the server want it
+        if (player == null || !ClientConfig.heatBarShown())
             return;
 
         float heat = ClientHeatData.get();

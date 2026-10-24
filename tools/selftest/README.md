@@ -49,6 +49,9 @@ Scenarios:
   `Generator.PROF` array it is printed too (`PROF` lines). Run it on both
   versions, one after the other (never two at once), and repeat: single runs
   vary by 10-20%.
+- `multiplayer`: two players log in through recording connections: both get
+  the apocalypse state on login, the new day, the phase title and music on a
+  phase change; the days go on with nobody online. Prints `RESULT fails=N`.
 - `logic`: checks of the new behaviour (steps, restart, ritual, old configs,
   light sync, animal spawning, breeding, mobs left in unattended areas).
   Prints PASS/FAIL lines and `RESULT fails=N`.

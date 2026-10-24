@@ -21,6 +21,11 @@ public class ConfigManager {
     public static int minDamageHeight = 60; // Minimum height for creature damage
     public static int minWaterEvaporationHeight = 60; // Minimum height for water evaporation
     public static int apocalypseEndDay = 200;
+    // Days of normal play left before the apocalypse starts counting (the day stays put)
+    public static int startDelayDays = 0;
+    // HUD the players may show (each player can still hide them, see ClientConfig)
+    public static boolean showDayCounter = true;
+    public static boolean showHeatBar = true;
 
     // Marks a value missing from the file (configs written by older versions)
     public static final int UNSET = Integer.MIN_VALUE;
@@ -33,94 +38,142 @@ public class ConfigManager {
     // The file was written by an older version of the mod
     public static boolean legacyConfig = false;
 
-    /**
-     * Attempts to locate or create the configuration file in multiple possible
-     * locations.
-     * Tries the standard Forge config directory first, then falls back to the game
-     * directory.
-     * If neither exists, it will create the config file in the primary location.
-     */
-    private static Path resolveConfigPath() {
-        String fileName = "judgementdaymod-apocalypse.properties";
+    private static final String FILE_NAME = "judgementdaymod-apocalypse.properties";
+    // Settings new worlds start with (never written by the mod once created)
+    private static final String DEFAULTS_FILE_NAME = "judgementdaymod-defaults.properties";
+    // Chunk data of the mod in a world: the mod already ran there
+    private static final String CHUNK_DATA_FILE = "judgementday_chunkdata.dat";
 
+    // The config of the world being played (in its serverconfig folder)
+    private static Path worldConfigPath;
+
+    /**
+     * The config directory: the standard Forge one, or GAMEDIR/config if it is missing.
+     */
+    private static Path configDir() {
         // Try location 1: FMLPaths.CONFIGDIR (Forge standard config directory)
         Path configDir1 = FMLPaths.CONFIGDIR.get();
-
+        if (Files.isDirectory(configDir1))
+            return configDir1;
         // Try location 2: GAMEDIR/config (fallback, in case the Forge path is missing)
         Path configDir2 = FMLPaths.GAMEDIR.get().resolve("config");
-
-        // Check which directory exists and is writable
-        if (Files.exists(configDir1) && Files.isDirectory(configDir1)) {
-            Path configFile = configDir1.resolve(fileName);
-            JudgementDayMod.LOGGER.info("[JudgementDayMod] Using config directory: " + configDir1.toAbsolutePath());
-            return configFile;
+        if (Files.isDirectory(configDir2)) {
+            JudgementDayMod.LOGGER.info("[JudgementDayMod] Using fallback config directory: " + configDir2.toAbsolutePath());
+            return configDir2;
         }
-
-        if (Files.exists(configDir2) && Files.isDirectory(configDir2)) {
-            Path configFile = configDir2.resolve(fileName);
-            JudgementDayMod.LOGGER
-                    .info("[JudgementDayMod] Using fallback config directory: " + configDir2.toAbsolutePath());
-            return configFile;
-        }
-
         // No valid config directory found — create one in the primary location
-        JudgementDayMod.LOGGER
-                .warn("[JudgementDayMod] No config directory found, creating at: " + configDir1.toAbsolutePath());
-        return configDir1.resolve(fileName);
+        return configDir1;
     }
 
-    public static void load() {
-        Path configPath = resolveConfigPath();
-        Properties props = new Properties();
+    /**
+     * Loads the config of the world in worldDir (each world has its own, in its
+     * serverconfig folder, same format as before). A world without one gets it here:
+     * a world the mod already ran in takes the single config older versions shared by
+     * all worlds (config/judgementdaymod-apocalypse.properties), so it carries on where
+     * it was; a new world starts on day 0 with the settings of
+     * config/judgementdaymod-defaults.properties (created with the default values).
+     */
+    public static void load(Path worldDir) {
+        worldConfigPath = worldDir.resolve("serverconfig").resolve(FILE_NAME);
+        resetToDefaults();
 
-        if (!Files.exists(configPath)) {
-            JudgementDayMod.LOGGER.info("[JudgementDayMod] Config not found, creating with default values.");
+        if (Files.exists(worldConfigPath)) {
+            read(worldConfigPath, true);
+        } else {
+            final Path oldShared = configDir().resolve(FILE_NAME);
+            final boolean modRanHere = Files.exists(worldDir.resolve("data").resolve(CHUNK_DATA_FILE));
+            if (modRanHere && Files.exists(oldShared)) {
+                JudgementDayMod.LOGGER.info("[JudgementDayMod] World config created from " + oldShared.toAbsolutePath());
+                read(oldShared, true);
+            } else {
+                final Path defaults = configDir().resolve(DEFAULTS_FILE_NAME);
+                if (!Files.exists(defaults)) {
+                    saveDefaults(defaults);
+                }
+                JudgementDayMod.LOGGER.info("[JudgementDayMod] New world config from " + defaults.toAbsolutePath());
+                read(defaults, false);
+                legacyConfig = false;
+            }
             save();
+        }
+
+        if (startBeforeApocalypse) {
+            startBeforeApocalypse = false;
+            apocalypseCurrentDay -= (apocalypseMaxDays / 5);
+            save();
+        }
+        JudgementDayMod.LOGGER.info("[JudgementDayMod] Config loaded from: " + worldConfigPath.toAbsolutePath());
+    }
+
+    /** The values of a new config. */
+    private static void resetToDefaults() {
+        apocalypseActive = false;
+        startBeforeApocalypse = true;
+        apocalypseCurrentDay = 0;
+        apocalypseMaxDays = 50;
+        minDamageHeight = 60;
+        minWaterEvaporationHeight = 60;
+        apocalypseEndDay = 200;
+        startDelayDays = 0;
+        showDayCounter = true;
+        showHeatBar = true;
+        lastAppliedPhase = UNSET;
+        lastApocalypseStep = UNSET;
+        stepOriginDay = UNSET;
+        legacyConfig = false;
+    }
+
+    /**
+     * Reads a config file over the current values.
+     *
+     * @param state false for the defaults file: only the settings, not the state of a world
+     */
+    private static void read(Path path, boolean state) {
+        Properties props = new Properties();
+        try (InputStream in = Files.newInputStream(path)) {
+            props.load(in);
+        } catch (IOException e) {
+            JudgementDayMod.LOGGER.error("[JudgementDayMod] Error reading config: " + e.getMessage());
             return;
         }
 
-        try (InputStream in = Files.newInputStream(configPath)) {
-            props.load(in);
+        apocalypseMaxDays = parseInt(props, "apocalypseMaxDays", apocalypseMaxDays);
+        minDamageHeight = parseInt(props, "minDamageHeight", minDamageHeight);
+        minWaterEvaporationHeight = parseInt(props, "minWaterEvaporationHeight", minWaterEvaporationHeight);
+        startBeforeApocalypse = parseBoolean(props, "startBeforeApocalypse", startBeforeApocalypse);
+        apocalypseEndDay = parseInt(props, "apocalypseEndDay", apocalypseEndDay);
+        startDelayDays = Math.max(0, parseInt(props, "startDelayDays", startDelayDays));
+        showDayCounter = parseBoolean(props, "showDayCounter", showDayCounter);
+        showHeatBar = parseBoolean(props, "showHeatBar", showHeatBar);
+        if (!state)
+            return;
 
-            apocalypseActive = Boolean.parseBoolean(
-                    props.getProperty("apocalypseActive", String.valueOf(apocalypseActive)));
+        apocalypseActive = parseBoolean(props, "apocalypseActive", apocalypseActive);
+        apocalypseCurrentDay = parseInt(props, "apocalypseCurrentDay", apocalypseCurrentDay);
 
-            apocalypseMaxDays = Integer.parseInt(
-                    props.getProperty("apocalypseMaxDays", String.valueOf(apocalypseMaxDays)));
+        legacyConfig = !props.containsKey("lastAppliedPhase");
 
-            apocalypseCurrentDay = Integer.parseInt(
-                    props.getProperty("apocalypseCurrentDay", String.valueOf(apocalypseCurrentDay)));
+        lastAppliedPhase = parseOrUnset(props, "lastAppliedPhase");
+        stepOriginDay = parseOrUnset(props, "stepOriginDay");
+        lastApocalypseStep = parseOrUnset(props, "lastApocalypseStep");
+    }
 
-            minDamageHeight = Integer.parseInt(
-                    props.getProperty("minDamageHeight", String.valueOf(minDamageHeight)));
-
-            minWaterEvaporationHeight = Integer.parseInt(
-                    props.getProperty("minWaterEvaporationHeight", String.valueOf(minWaterEvaporationHeight)));
-
-            startBeforeApocalypse = Boolean.parseBoolean(
-                    props.getProperty("startBeforeApocalypse", String.valueOf(startBeforeApocalypse)));
-
-            apocalypseEndDay = Integer.parseInt(
-                    props.getProperty("apocalypseEndDay", String.valueOf(apocalypseEndDay)));
-
-            legacyConfig = !props.containsKey("lastAppliedPhase");
-
-            lastAppliedPhase = parseOrUnset(props, "lastAppliedPhase");
-            stepOriginDay = parseOrUnset(props, "stepOriginDay");
-            lastApocalypseStep = parseOrUnset(props, "lastApocalypseStep");
-
-            if (startBeforeApocalypse) {
-                startBeforeApocalypse = false;
-                apocalypseCurrentDay -= (apocalypseMaxDays / 5);
-                save();
-            }
-
-            JudgementDayMod.LOGGER
-                    .info("[JudgementDayMod] Config loaded successfully from: " + configPath.toAbsolutePath());
-
-        } catch (IOException e) {
-            JudgementDayMod.LOGGER.error("[JudgementDayMod] Error reading config: " + e.getMessage());
+    /** A setting: missing or unreadable keeps the current value. */
+    private static int parseInt(Properties props, String key, int current) {
+        String value = props.getProperty(key);
+        if (value == null)
+            return current;
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            JudgementDayMod.LOGGER.warn("[JudgementDayMod] Ignoring invalid " + key + "=" + value);
+            return current;
         }
+    }
+
+    private static boolean parseBoolean(Properties props, String key, boolean current) {
+        String value = props.getProperty(key);
+        return value == null ? current : Boolean.parseBoolean(value.trim());
     }
 
     /**
@@ -140,10 +193,11 @@ public class ConfigManager {
     }
 
     /**
-     * Saves current in-memory variables to the config file.
+     * Saves current in-memory variables to the config file of the world.
      */
     public static void save() {
-        Path configPath = resolveConfigPath();
+        if (worldConfigPath == null)
+            return;
         Properties props = new Properties();
 
         props.setProperty("apocalypseActive", String.valueOf(apocalypseActive));
@@ -153,6 +207,9 @@ public class ConfigManager {
         props.setProperty("minWaterEvaporationHeight", String.valueOf(minWaterEvaporationHeight));
         props.setProperty("apocalypseEndDay", String.valueOf(apocalypseEndDay));
         props.setProperty("startBeforeApocalypse", String.valueOf(startBeforeApocalypse));
+        props.setProperty("startDelayDays", String.valueOf(startDelayDays));
+        props.setProperty("showDayCounter", String.valueOf(showDayCounter));
+        props.setProperty("showHeatBar", String.valueOf(showHeatBar));
         if (lastAppliedPhase != UNSET) {
             props.setProperty("lastAppliedPhase", String.valueOf(lastAppliedPhase));
         }
@@ -162,16 +219,30 @@ public class ConfigManager {
         if (stepOriginDay != UNSET) {
             props.setProperty("stepOriginDay", String.valueOf(stepOriginDay));
         }
+        store(worldConfigPath, props, "JudgementDayMod Apocalypse Config (this world)");
+    }
 
+    /** Writes the defaults file new worlds start from, with the default values. */
+    private static void saveDefaults(Path path) {
+        Properties props = new Properties();
+        props.setProperty("apocalypseMaxDays", "50");
+        props.setProperty("apocalypseEndDay", "200");
+        props.setProperty("minDamageHeight", "60");
+        props.setProperty("minWaterEvaporationHeight", "60");
+        props.setProperty("startBeforeApocalypse", "true");
+        props.setProperty("startDelayDays", "0");
+        props.setProperty("showDayCounter", "true");
+        props.setProperty("showHeatBar", "true");
+        store(path, props, "JudgementDayMod settings for new worlds (each world has its own config in <world>/serverconfig)");
+    }
+
+    private static void store(Path path, Properties props, String comment) {
         try {
-            Files.createDirectories(configPath.getParent());
-
-            try (OutputStream out = Files.newOutputStream(configPath)) {
-                props.store(out, "JudgementDayMod Apocalypse Config");
+            Files.createDirectories(path.getParent());
+            try (OutputStream out = Files.newOutputStream(path)) {
+                props.store(out, comment);
             }
-
-            JudgementDayMod.LOGGER.info("[JudgementDayMod] Config saved to: " + configPath.toAbsolutePath());
-
+            JudgementDayMod.LOGGER.info("[JudgementDayMod] Config saved to: " + path.toAbsolutePath());
         } catch (IOException e) {
             JudgementDayMod.LOGGER.error("[JudgementDayMod] Error saving config: " + e.getMessage());
             e.printStackTrace();

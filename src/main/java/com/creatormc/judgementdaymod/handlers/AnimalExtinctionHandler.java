@@ -3,6 +3,8 @@ package com.creatormc.judgementdaymod.handlers;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.Mob;
@@ -18,6 +20,8 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.level.WorldGenLevel;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.MobSpawnSettings;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.living.MobSpawnEvent;
 import net.minecraftforge.eventbus.api.Event;
@@ -35,9 +39,13 @@ import net.minecraftforge.fml.common.Mod;
  * category (or class) and stopped through Forge's spawn events, which natural
  * spawning, world generation, structures, spawners and the other vanilla spawn
  * paths go through (as do mods that spawn through EntityType or Forge's event
- * factory, see also MobMixin). Breeding, eggs, buckets, spawn eggs, dispensers,
- * commands and conversions are left alone; any other spawn of an animal is refused,
- * summons made by other mods included. New bee nests come without bees (see
+ * factory, see also MobMixin). Only the animals that would appear by chance are
+ * refused (natural spawning, world generation, structures, spawners, jockeys,
+ * events such as the wandering trader's llamas, patrols, reinforcements): births
+ * someone forces are left alone (breeding, eggs, buckets, spawn eggs, dispensers,
+ * commands, conversions, summons such as another mod's ritual, triggered spawns).
+ * Skeleton horses are undead, not animals: they appear as before (lightning traps
+ * included). New bee nests come without bees (see
  * BeehiveDecoratorMixin).
  */
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
@@ -53,14 +61,16 @@ public class AnimalExtinctionHandler {
      */
     @SubscribeEvent
     public static void onSpawnPlacementCheck(MobSpawnEvent.SpawnPlacementCheck event) {
-        if (isBlockedSpawn(event.getLevel(), event.getSpawnType()) && isAnimalCategory(event.getEntityType())) {
+        if (isBlockedSpawn(event.getLevel(), event.getSpawnType()) && isAnimalCategory(event.getEntityType())
+                && event.getEntityType() != EntityType.SKELETON_HORSE) {
             event.setResult(Event.Result.DENY);
         }
     }
 
     /**
-     * Every other spawn path (spawners, structures, jockeys, wandering trader llamas,
-     * skeleton traps...): the spawn is cancelled and the mob never joins the world.
+     * Every other spawn path that makes an animal appear by chance (spawners,
+     * structures, jockeys, wandering trader llamas...): the spawn is cancelled and the
+     * mob never joins the world.
      * Also when another mod cancelled the event (that only skips the mob's setup).
      */
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
@@ -77,7 +87,34 @@ public class AnimalExtinctionHandler {
      * be refused, every tick, since their mob caps never fill). See NaturalSpawnerMixin.
      */
     public static boolean skipsNaturalSpawning(Level level, MobCategory category) {
-        return isExtinct() && level.dimension() == Level.OVERWORLD && isAnimalCategory(category);
+        return isExtinct() && level.dimension() == Level.OVERWORLD && isAnimalCategory(category)
+                && !(category == MobCategory.CREATURE && hasNaturalSkeletonHorses(level));
+    }
+
+    // Biome registry the answer below was computed for, and the answer (server thread)
+    private static Registry<Biome> skeletonHorseBiomes;
+    private static boolean naturalSkeletonHorses;
+
+    /**
+     * True if a biome spawns skeleton horses naturally (none does in vanilla, datapacks
+     * and mods may): the creature spawning is attempted then, only them pass.
+     */
+    private static boolean hasNaturalSkeletonHorses(Level level) {
+        final Registry<Biome> biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
+        if (biomes != skeletonHorseBiomes) {
+            boolean found = false;
+            for (Biome biome : biomes) {
+                for (MobSpawnSettings.SpawnerData spawn : biome.getMobSettings().getMobs(MobCategory.CREATURE).unwrap()) {
+                    if (spawn.type == EntityType.SKELETON_HORSE) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            naturalSkeletonHorses = found;
+            skeletonHorseBiomes = biomes;
+        }
+        return naturalSkeletonHorses;
     }
 
     /**
@@ -93,13 +130,7 @@ public class AnimalExtinctionHandler {
         if (!(event.getEntity() instanceof Mob mob) || event.loadedFromDisk())
             return;
 
-        // The skeleton trap horse that lightning creates does not go through any spawn event
-        if (!event.isCanceled() && mob instanceof SkeletonHorse horse && horse.isTrap()
-                && isExtinctIn(event.getLevel())) {
-            event.setCanceled(true);
-        }
-
-        // An animal refused here: a mount (chicken jockey, skeleton trap horse) lets its
+        // An animal refused here: a mount (chicken jockey) lets its
         // riders go, a rider (baby strider jockey) leaves its mount, or they would stay
         // attached to a mob that is not in the world
         if (event.isCanceled() && mob.isSpawnCancelled() && isExtinctIn(event.getLevel()) && isAnimal(mob)) {
@@ -116,6 +147,7 @@ public class AnimalExtinctionHandler {
             return false;
         }
 
+        // Births someone forces are allowed, appearances by chance are not
         switch (spawnType) {
             case BREEDING:
             case SPAWN_EGG:
@@ -123,6 +155,8 @@ public class AnimalExtinctionHandler {
             case BUCKET:
             case COMMAND:
             case CONVERSION:
+            case MOB_SUMMONED:
+            case TRIGGERED:
                 return false;
             default:
                 return true;
@@ -173,8 +207,9 @@ public class AnimalExtinctionHandler {
     }
 
     private static boolean isAnimal(Mob mob) {
-        // Traders, villagers and other characters are not animals, whatever their category
-        if (mob instanceof Npc || mob instanceof Merchant || mob instanceof Allay)
+        // Traders, villagers and other characters are not animals, whatever their category,
+        // nor are skeleton horses (undead)
+        if (mob instanceof Npc || mob instanceof Merchant || mob instanceof Allay || mob instanceof SkeletonHorse)
             return false;
         return isAnimalCategory(mob.getType())
                 || mob instanceof Animal

@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.level.ChunkWatchEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppedEvent;
@@ -13,6 +14,11 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.server.MinecraftServer;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.storage.LevelResource;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -37,6 +43,10 @@ public class DayTracker {
 
     // Thread-safe queue to process chunks in the next tick
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
+    // Chunks of a batch left for the next tick, processed before the queue (server thread)
+    private static final ArrayDeque<ChunkToProcess> carriedOver = new ArrayDeque<>();
+    // How many times each chunk waits to be processed (queue and carried over)
+    private static final Long2IntOpenHashMap waiting = new Long2IntOpenHashMap();
 
     @SubscribeEvent(priority = EventPriority.LOW)
     public static void onChunkWatch(ChunkWatchEvent.Watch event) {
@@ -55,7 +65,7 @@ public class DayTracker {
 
         // Inserisci chunk in the list
         ChunkToProcess task = new ChunkToProcess(serverLevel, chunkX, chunkZ);
-        chunksToProcess.offer(task);
+        offer(task);
 
     }
 
@@ -80,11 +90,11 @@ public class DayTracker {
             Analyzer.clearCache();
         }
 
-        // All online players:
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            ServerLevel level = player.serverLevel();
-
-            long currentDayTime = level.getDayTime() % 24000L; // Time of day in ticks (0–23999)
+        // The day counts in the overworld, also while nobody is online (all levels share
+        // its time of day)
+        final ServerLevel overworld = server.overworld();
+        if (overworld != null) {
+            long currentDayTime = overworld.getDayTime() % 24000L; // Time of day in ticks (0–23999)
 
             // First tick after server start — initialize reference value
             if (lastDayTime == -1) {
@@ -96,17 +106,19 @@ public class DayTracker {
             // This happens when a full day passes, or when players sleep or use /time set
             // day
             if (currentDayTime < lastDayTime) {
-                ConfigManager.apocalypseCurrentDay++;
-                ConfigManager.save();
-                UnattendedChunkHandler.onNewDay(server.overworld());
-                Generator.handleDayEvent(player);
+                if (ConfigManager.startDelayDays > 0) {
+                    // Normal play before the apocalypse starts counting: the day stays put
+                    ConfigManager.startDelayDays--;
+                    ConfigManager.save();
+                } else {
+                    ConfigManager.apocalypseCurrentDay++;
+                    ConfigManager.save();
+                    UnattendedChunkHandler.onNewDay(overworld);
+                    Generator.handleDayEvent();
+                }
 
-                NetworkHandler.sendToClient(
-                        new ApocalypseSyncPacket(
-                                ConfigManager.apocalypseCurrentDay,
-                                ConfigManager.apocalypseMaxDays,
-                                ConfigManager.apocalypseActive),
-                        player);
+                // Every player draws the new day
+                NetworkHandler.sendToAll(ApocalypseSyncPacket.current());
             }
 
             // Update stored value for the next tick comparison
@@ -114,15 +126,15 @@ public class DayTracker {
         }
 
         // Nothing queued: skip the batch allocation
-        if (chunksToProcess.isEmpty())
+        if (chunksToProcess.isEmpty() && carriedOver.isEmpty())
             return;
 
         // --- PROCESS MULTI-CHUNK BATCH PER TICK + SHUFFLE ---
-        // Pull up to N tasks from the queue
+        // Pull up to N tasks, the ones left by the last tick first
         List<ChunkToProcess> batchToProcesses = new ArrayList<>(CHUNKS_PER_TICK);
 
         for (int i = 0; i < CHUNKS_PER_TICK; i++) {
-            ChunkToProcess next = chunksToProcess.poll();
+            ChunkToProcess next = carriedOver.isEmpty() ? chunksToProcess.poll() : carriedOver.poll();
             if (next == null)
                 break;
             batchToProcesses.add(next);
@@ -138,15 +150,25 @@ public class DayTracker {
             LightChecks.begin();
             Generator.beginBatch();
             try {
-                for (ChunkToProcess task : batchToProcesses) {
+                // At most the work of N chunks processed on time: a catch up of many steps
+                // counts as several chunks, the rest of the batch waits for the next tick
+                float work = 0;
+                for (int i = 0; i < batchToProcesses.size(); i++) {
+                    if (work >= CHUNKS_PER_TICK) {
+                        carriedOver.addAll(batchToProcesses.subList(i, batchToProcesses.size()));
+                        break;
+                    }
+                    ChunkToProcess task = batchToProcesses.get(i);
+                    leftQueue(task);
                     ServerLevel lvl = task.getLevel();
                     if (lvl == null || !lvl.getServer().isSameThread()
                             || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
+                        work++;
                         continue;
                     }
 
                     // Do the work
-                    Generator.processChunk(task);
+                    work += Generator.processChunk(task);
                 }
             } finally {
                 Generator.endBatch();
@@ -156,14 +178,26 @@ public class DayTracker {
 
     }
 
+    /** A player joining draws the apocalypse as the server has it. */
+    @SubscribeEvent
+    public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            NetworkHandler.sendToClient(ApocalypseSyncPacket.current(), player);
+        }
+    }
+
     @SubscribeEvent
     public static void onServerStarting(ServerStartingEvent event) {
-        ConfigManager.load();
+        ConfigManager.load(event.getServer().getWorldPath(LevelResource.ROOT));
 
         // Reset variables
         tickCount = 0;
         lastDayTime = -1;
         chunksToProcess.clear();
+        carriedOver.clear();
+        synchronized (waiting) {
+            waiting.clear();
+        }
         ChunkLightSync.clear();
         LightChecks.clear();
         Generator.clearPendingFalls();
@@ -174,13 +208,52 @@ public class DayTracker {
     public static void onServerStopped(ServerStoppedEvent event) {
         // Drop references to the stopped world so it can be garbage collected
         chunksToProcess.clear();
+        carriedOver.clear();
+        synchronized (waiting) {
+            waiting.clear();
+        }
         ChunkLightSync.clear();
         LightChecks.clear();
         Generator.clearPendingFalls();
     }
 
     public static void enqueueChunk(ChunkToProcess c) {
-        chunksToProcess.offer(c);
+        offer(c);
     }
 
+
+    private static void offer(ChunkToProcess task) {
+        if (isOverworld(task)) {
+            synchronized (waiting) {
+                waiting.addTo(ChunkPos.asLong(task.getChunkX(), task.getChunkZ()), 1);
+            }
+        }
+        chunksToProcess.offer(task);
+    }
+
+    private static void leftQueue(ChunkToProcess task) {
+        if (!isOverworld(task))
+            return;
+        final long key = ChunkPos.asLong(task.getChunkX(), task.getChunkZ());
+        synchronized (waiting) {
+            if (waiting.addTo(key, -1) <= 1) {
+                waiting.remove(key);
+            }
+        }
+    }
+
+    // Only overworld chunks are processed
+    private static boolean isOverworld(ChunkToProcess task) {
+        return task.getLevel() != null && task.getLevel().dimension() == Level.OVERWORLD;
+    }
+
+    /**
+     * True if the overworld chunk waits to be processed (it is sent again whole once
+     * processed, if it changes).
+     */
+    public static boolean isWaiting(long chunk) {
+        synchronized (waiting) {
+            return waiting.containsKey(chunk);
+        }
+    }
 }
