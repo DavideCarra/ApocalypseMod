@@ -13,6 +13,9 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraft.server.MinecraftServer;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -40,6 +43,8 @@ public class DayTracker {
     private static final ConcurrentLinkedQueue<ChunkToProcess> chunksToProcess = new ConcurrentLinkedQueue<>();
     // Chunks of a batch left for the next tick, processed before the queue (server thread)
     private static final ArrayDeque<ChunkToProcess> carriedOver = new ArrayDeque<>();
+    // How many times each chunk waits to be processed (queue and carried over)
+    private static final Long2IntOpenHashMap waiting = new Long2IntOpenHashMap();
 
     @SubscribeEvent(priority = EventPriority.LOW)
     public static void onChunkWatch(ChunkWatchEvent.Watch event) {
@@ -58,7 +63,7 @@ public class DayTracker {
 
         // Inserisci chunk in the list
         ChunkToProcess task = new ChunkToProcess(serverLevel, chunkX, chunkZ);
-        chunksToProcess.offer(task);
+        offer(task);
 
     }
 
@@ -150,6 +155,7 @@ public class DayTracker {
                         break;
                     }
                     ChunkToProcess task = batchToProcesses.get(i);
+                    leftQueue(task);
                     ServerLevel lvl = task.getLevel();
                     if (lvl == null || !lvl.getServer().isSameThread()
                             || !lvl.hasChunk(task.getChunkX(), task.getChunkZ())) {
@@ -177,6 +183,9 @@ public class DayTracker {
         lastDayTime = -1;
         chunksToProcess.clear();
         carriedOver.clear();
+        synchronized (waiting) {
+            waiting.clear();
+        }
         ChunkLightSync.clear();
         LightChecks.clear();
         Generator.clearPendingFalls();
@@ -188,13 +197,51 @@ public class DayTracker {
         // Drop references to the stopped world so it can be garbage collected
         chunksToProcess.clear();
         carriedOver.clear();
+        synchronized (waiting) {
+            waiting.clear();
+        }
         ChunkLightSync.clear();
         LightChecks.clear();
         Generator.clearPendingFalls();
     }
 
     public static void enqueueChunk(ChunkToProcess c) {
-        chunksToProcess.offer(c);
+        offer(c);
     }
 
+
+    private static void offer(ChunkToProcess task) {
+        if (isOverworld(task)) {
+            synchronized (waiting) {
+                waiting.addTo(ChunkPos.asLong(task.getChunkX(), task.getChunkZ()), 1);
+            }
+        }
+        chunksToProcess.offer(task);
+    }
+
+    private static void leftQueue(ChunkToProcess task) {
+        if (!isOverworld(task))
+            return;
+        final long key = ChunkPos.asLong(task.getChunkX(), task.getChunkZ());
+        synchronized (waiting) {
+            if (waiting.addTo(key, -1) <= 1) {
+                waiting.remove(key);
+            }
+        }
+    }
+
+    // Only overworld chunks are processed
+    private static boolean isOverworld(ChunkToProcess task) {
+        return task.getLevel() != null && task.getLevel().dimension() == Level.OVERWORLD;
+    }
+
+    /**
+     * True if the overworld chunk waits to be processed (it is sent again whole once
+     * processed, if it changes).
+     */
+    public static boolean isWaiting(long chunk) {
+        synchronized (waiting) {
+            return waiting.containsKey(chunk);
+        }
+    }
 }

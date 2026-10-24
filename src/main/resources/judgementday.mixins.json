@@ -12,7 +12,8 @@
         "BeehiveDecoratorMixin",
         "BeehiveBlockEntityMixin",
         "MobMixin",
-        "NaturalSpawnerMixin"
+        "NaturalSpawnerMixin",
+        "ChunkHolderMixin"
     ],
     "injectors": {
         "defaultRequire": 1
