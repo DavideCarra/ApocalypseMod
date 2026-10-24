@@ -1,11 +1,13 @@
 package com.creatormc.judgementdaymod.handlers;
 
+import com.creatormc.judgementdaymod.models.ClientApocalypseData;
 import com.creatormc.judgementdaymod.models.ClientConfig;
 import com.creatormc.judgementdaymod.models.ClientHeatData;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.level.Level;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -23,6 +25,14 @@ public class HeatOverlay {
             return;
 
         float heat = ClientHeatData.get();
+        // Only while the player is hot: the server heats survival players in the overworld
+        // from day 0 to the end day, anywhere else the last heat sent would stay frozen
+        if (heat <= 0f || player.isCreative() || player.isSpectator()
+                || !player.level().dimension().equals(Level.OVERWORLD)
+                || ClientApocalypseData.currentDay < 0
+                || ClientApocalypseData.currentDay >= ClientApocalypseData.endDay)
+            return;
+
         float maxHeat = 10f;
         float ratio = heat / maxHeat;
 

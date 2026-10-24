@@ -20,5 +20,6 @@ public class ClientPlayerEventHandler {
     public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         // The next world or server sends its own state
         ClientApocalypseData.reset();
+        ClientHeatData.set(0f);
     }
 }
