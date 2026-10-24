@@ -1,7 +1,7 @@
 package com.creatormc.judgementdaymod.handlers;
 
+import com.creatormc.judgementdaymod.models.ClientApocalypseData;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
-import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -23,14 +23,14 @@ public class ApocalypseHudOverlay {
         if (mc.player == null || level == null)
             return;
 
-        int maxDay = ConfigManager.apocalypseMaxDays;
-        int currentDay = ConfigManager.apocalypseCurrentDay;
+        int maxDay = ClientApocalypseData.maxDays;
+        int currentDay = ClientApocalypseData.currentDay;
 
         // daysLeft is the absolute difference between current day and the end day
         int daysLeft = Math.abs(maxDay - currentDay);
 
         // Skip rendering if apocalypse is inactive or finished
-        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseMaxDays) {
+        if (ClientApocalypseData.currentDay >= ClientApocalypseData.maxDays) {
             return;
         }
 

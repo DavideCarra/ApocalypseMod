@@ -1,9 +1,8 @@
 package com.creatormc.judgementdaymod.setup;
 
-import com.creatormc.judgementdaymod.utilities.ConfigManager;
-
 import javax.annotation.Nonnull;
 
+import com.creatormc.judgementdaymod.models.ClientApocalypseData;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 import net.minecraft.client.renderer.DimensionSpecialEffects;
 import net.minecraft.world.phys.Vec3;
@@ -17,7 +16,7 @@ public class ApocalypseSky extends DimensionSpecialEffects {
 
     @Override
     public Vec3 getBrightnessDependentFogColor(@Nonnull Vec3 color, float brightness) {
-        double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
+        double percent = Phase.toPercent(ClientApocalypseData.currentDay, ClientApocalypseData.maxDays);
 
         // Below 20%, keep vanilla behavior
         if (percent < 20.0) {
@@ -31,7 +30,7 @@ public class ApocalypseSky extends DimensionSpecialEffects {
         double factor = 0.0f;
 
         // If apocalypse is over, do not apply tint
-        if (!(ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay)) {
+        if (!(ClientApocalypseData.currentDay >= ClientApocalypseData.endDay)) {
             factor = (percent - 20.0) / 80.0;
         }
         

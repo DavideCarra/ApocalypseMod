@@ -5,6 +5,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.level.ChunkWatchEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppedEvent;
@@ -88,11 +89,11 @@ public class DayTracker {
             Analyzer.clearCache();
         }
 
-        // All online players:
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            ServerLevel level = player.serverLevel();
-
-            long currentDayTime = level.getDayTime() % 24000L; // Time of day in ticks (0–23999)
+        // The day counts in the overworld, also while nobody is online (all levels share
+        // its time of day)
+        final ServerLevel overworld = server.overworld();
+        if (overworld != null) {
+            long currentDayTime = overworld.getDayTime() % 24000L; // Time of day in ticks (0–23999)
 
             // First tick after server start — initialize reference value
             if (lastDayTime == -1) {
@@ -106,15 +107,11 @@ public class DayTracker {
             if (currentDayTime < lastDayTime) {
                 ConfigManager.apocalypseCurrentDay++;
                 ConfigManager.save();
-                UnattendedChunkHandler.onNewDay(server.overworld());
-                Generator.handleDayEvent(player);
+                UnattendedChunkHandler.onNewDay(overworld);
+                Generator.handleDayEvent();
 
-                NetworkHandler.sendToClient(
-                        new ApocalypseSyncPacket(
-                                ConfigManager.apocalypseCurrentDay,
-                                ConfigManager.apocalypseMaxDays,
-                                ConfigManager.apocalypseActive),
-                        player);
+                // Every player draws the new day
+                NetworkHandler.sendToAll(ApocalypseSyncPacket.current());
             }
 
             // Update stored value for the next tick comparison
@@ -172,6 +169,14 @@ public class DayTracker {
             }
         }
 
+    }
+
+    /** A player joining draws the apocalypse as the server has it. */
+    @SubscribeEvent
+    public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            NetworkHandler.sendToClient(ApocalypseSyncPacket.current(), player);
+        }
     }
 
     @SubscribeEvent

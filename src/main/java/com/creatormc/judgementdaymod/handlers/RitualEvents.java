@@ -1,5 +1,7 @@
 package com.creatormc.judgementdaymod.handlers;
 
+import com.creatormc.judgementdaymod.models.ApocalypseSyncPacket;
+import com.creatormc.judgementdaymod.models.PhaseTitlePacket;
 import com.creatormc.judgementdaymod.setup.ModItems;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
@@ -402,10 +404,11 @@ public class RitualEvents {
                 if (ConfigManager.apocalypseMaxDays >= ConfigManager.apocalypseCurrentDay) {
                     ConfigManager.apocalypseMaxDays = ConfigManager.apocalypseCurrentDay - 1;
                 }
-                PhaseTitleOverlay.displayPhaseTitle(Phase.PHASE_END.getTitleComponent(),
-                        Phase.PHASE_END.getDescriptionComponent());
+                NetworkHandler.sendToAll(new PhaseTitlePacket(Phase.PHASE_END));
             }
             ConfigManager.save();
+            // The end day (and the days, maybe) changed: the clients draw the end now
+            NetworkHandler.sendToAll(ApocalypseSyncPacket.current());
         }));
     }
 

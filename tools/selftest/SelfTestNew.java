@@ -93,6 +93,18 @@ public class SelfTestNew {
     public static void onTick(TickEvent.ServerTickEvent event) {
         if (SelfTestCommon.server == null || event.phase != TickEvent.Phase.END)
             return;
+        if (SelfTestCommon.enabled() && "multiplayer".equals(SelfTestCommon.scenario())) {
+            try {
+                multiplayerTick();
+            } catch (Throwable t) {
+                SelfTestCommon.log("EXCEPTION " + t);
+                for (StackTraceElement el : t.getStackTrace())
+                    SelfTestCommon.log("   at " + el);
+                fails++;
+                SelfTestCommon.finish();
+            }
+            return;
+        }
         if (!(SelfTestCommon.enabled() && "logic".equals(SelfTestCommon.scenario())))
             return;
         try {
@@ -102,6 +114,126 @@ public class SelfTestNew {
             for (StackTraceElement el : t.getStackTrace())
                 SelfTestCommon.log("   at " + el);
             fails++;
+            SelfTestCommon.finish();
+        }
+    }
+
+    // ---------------------------------------------------------------- multiplayer
+
+    /** A player logged in through a recording connection: what the mod sends it. */
+    static final class Recorded {
+        final net.minecraft.server.level.ServerPlayer player;
+        final io.netty.channel.embedded.EmbeddedChannel channel;
+        final List<String> events = new ArrayList<>();
+
+        Recorded(net.minecraft.server.level.ServerPlayer player, io.netty.channel.embedded.EmbeddedChannel channel) {
+            this.player = player;
+            this.channel = channel;
+        }
+
+        void drain() {
+            Object msg;
+            while ((msg = channel.readOutbound()) != null)
+                record(msg);
+        }
+
+        void record(Object msg) {
+            if (msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket bundle) {
+                for (Object sub : bundle.subPackets())
+                    record(sub);
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket payload
+                    && payload.getIdentifier().getNamespace().equals("judgementday")) {
+                net.minecraft.network.FriendlyByteBuf buf = new net.minecraft.network.FriendlyByteBuf(payload.getData().copy());
+                int index = buf.readUnsignedByte();
+                if (index == 1)
+                    events.add("SYNC day=" + buf.readInt() + " max=" + buf.readInt() + " end=" + buf.readInt()
+                            + " damage=" + buf.readInt() + " active=" + buf.readBoolean());
+                else if (index == 2)
+                    events.add("TITLE " + buf.readEnum(com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase.class));
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundStopSoundPacket) {
+                events.add("STOPSOUND");
+            } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket sound) {
+                events.add("SOUND " + sound.getSound().unwrapKey().map(k -> k.location().toString()).orElse("?"));
+            }
+        }
+
+        boolean has(String prefix) {
+            for (String e : events)
+                if (e.startsWith(prefix))
+                    return true;
+            return false;
+        }
+    }
+
+    static final List<Recorded> players = new ArrayList<>();
+    static int mpDayBefore;
+
+    static Recorded join(ServerLevel level, String name, int x) {
+        com.mojang.authlib.GameProfile profile = new com.mojang.authlib.GameProfile(UUID.nameUUIDFromBytes(name.getBytes()), name);
+        net.minecraft.server.level.ServerPlayer player = new net.minecraft.server.level.ServerPlayer(SelfTestCommon.server, level, profile);
+        player.moveTo(x, 200, 0, 0, 0);
+        net.minecraft.network.Connection conn = new net.minecraft.network.Connection(net.minecraft.network.protocol.PacketFlow.SERVERBOUND);
+        io.netty.channel.embedded.EmbeddedChannel channel = new io.netty.channel.embedded.EmbeddedChannel(conn);
+        SelfTestCommon.server.getPlayerList().placeNewPlayer(conn, player);
+        Recorded r = new Recorded(player, channel);
+        players.add(r);
+        return r;
+    }
+
+    static void multiplayerTick() {
+        int tick = SelfTestCommon.tick;
+        ServerLevel level = SelfTestCommon.server.getLevel(Level.OVERWORLD);
+        for (Recorded r : players)
+            r.drain();
+        if (stage == 0 && tick >= 20) {
+            SelfTestCommon.freezeWorld(level); // the clock only moves when the test sets it
+            defaults();
+            ConfigManager.apocalypseCurrentDay = 9; // phase 1 starts on day 10 (50 days)
+            Generator.resetState();
+            level.setDayTime(1000);
+            join(level, "PlayerOne", 0);
+            join(level, "PlayerTwo", 400);
+            stage = 1;
+            waitUntil = tick + 5;
+        } else if (stage == 1 && tick >= waitUntil) {
+            for (Recorded r : players)
+                check("multiplayer: " + r.player.getGameProfile().getName() + " gets the state on login",
+                        r.has("SYNC day=9 max=50 end=200 damage=60 active=false"), r.events.toString());
+            for (Recorded r : players)
+                r.events.clear();
+            level.setDayTime(23990);
+            stage = 2;
+            waitUntil = tick + 2;
+        } else if (stage == 2 && tick >= waitUntil) {
+            level.setDayTime(24010); // a new day
+            stage = 3;
+            waitUntil = tick + 5;
+        } else if (stage == 3 && tick >= waitUntil) {
+            check("multiplayer: the day changes once", ConfigManager.apocalypseCurrentDay == 10, "day=" + ConfigManager.apocalypseCurrentDay);
+            for (Recorded r : players) {
+                String n = r.player.getGameProfile().getName();
+                check("multiplayer: " + n + " gets the new day", r.has("SYNC day=10 max=50 end=200 damage=48"), r.events.toString());
+                check("multiplayer: " + n + " gets the phase title", r.has("TITLE PHASE_2"), r.events.toString());
+                check("multiplayer: " + n + " gets the phase music", r.has("STOPSOUND") && r.has("SOUND "), r.events.toString());
+            }
+            SelfTestCommon.log("MP events " + players.get(0).events);
+            // Everybody leaves: the days go on
+            for (Recorded r : players)
+                SelfTestCommon.server.getPlayerList().remove(r.player);
+            players.clear();
+            mpDayBefore = ConfigManager.apocalypseCurrentDay;
+            level.setDayTime(47990);
+            stage = 4;
+            waitUntil = tick + 2;
+        } else if (stage == 4 && tick >= waitUntil) {
+            level.setDayTime(48010);
+            stage = 5;
+            waitUntil = tick + 5;
+        } else if (stage == 5 && tick >= waitUntil) {
+            check("multiplayer: days go on with nobody online", ConfigManager.apocalypseCurrentDay == mpDayBefore + 1,
+                    "before=" + mpDayBefore + " now=" + ConfigManager.apocalypseCurrentDay);
+            defaults();
+            SelfTestCommon.log("RESULT fails=" + fails);
             SelfTestCommon.finish();
         }
     }
@@ -217,30 +349,30 @@ public class SelfTestNew {
         check("legacy lastAppliedPhase derived", ConfigManager.lastAppliedPhase == 2,
                 "got " + ConfigManager.lastAppliedPhase);
         ConfigManager.apocalypseCurrentDay = 27;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("restart keeps heights", ConfigManager.minDamageHeight == 30 && ConfigManager.minWaterEvaporationHeight == 30,
                 "damage=" + ConfigManager.minDamageHeight + " water=" + ConfigManager.minWaterEvaporationHeight);
 
         // Second restart on the same phase
         Generator.resetState();
         ConfigManager.apocalypseCurrentDay = 28;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("second restart keeps heights", ConfigManager.minDamageHeight == 30, "damage=" + ConfigManager.minDamageHeight);
 
         // Next phase is applied once (30 - 3 * 6 = 12)
         ConfigManager.apocalypseCurrentDay = 30;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("next phase applied", ConfigManager.minDamageHeight == 12 && ConfigManager.lastAppliedPhase == 3,
                 "damage=" + ConfigManager.minDamageHeight + " phase=" + ConfigManager.lastAppliedPhase);
         Generator.resetState();
         ConfigManager.apocalypseCurrentDay = 31;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("phase not applied twice after restart", ConfigManager.minDamageHeight == 12, "damage=" + ConfigManager.minDamageHeight);
 
         // Fresh world: day 0 -> the first day change enters phase 0 (title/music), heights unchanged
         defaults();
         ConfigManager.apocalypseCurrentDay = 1;
-        Generator.handleDayEvent(player);
+        Generator.handleDayEvent();
         check("fresh world enters phase 0 on day 1", ConfigManager.lastAppliedPhase == 0 && ConfigManager.minDamageHeight == 60,
                 "phase=" + ConfigManager.lastAppliedPhase + " damage=" + ConfigManager.minDamageHeight);
 
@@ -263,7 +395,7 @@ public class SelfTestNew {
                 Generator.resetState();
                 for (int day = -2; day <= 25; day++) {
                     ConfigManager.apocalypseCurrentDay = day;
-                    Generator.handleDayEvent(player);
+                    Generator.handleDayEvent();
                     Generator.currentStep();
                 }
             }
