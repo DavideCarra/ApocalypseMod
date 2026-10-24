@@ -431,10 +431,19 @@ public class SelfTestNew {
         Entity command = EntityType.COW.spawn(level, grass, MobSpawnType.COMMAND);
         Entity zombie = EntityType.ZOMBIE.spawn(level, grass, MobSpawnType.SPAWNER);
         Entity villager = EntityType.VILLAGER.spawn(level, grass, MobSpawnType.STRUCTURE);
+        Entity summoned = EntityType.COW.spawn(level, grass, MobSpawnType.MOB_SUMMONED);
+        Entity triggered = EntityType.COW.spawn(level, grass, MobSpawnType.TRIGGERED);
+        Entity natural = EntityType.COW.spawn(level, grass, MobSpawnType.NATURAL);
         check("structure cow blocked after end", structure == null || !structure.isAddedToWorld(), "");
         check("spawner cow blocked after end", spawner == null || !spawner.isAddedToWorld(), "");
+        check("natural cow blocked after end", natural == null || !natural.isAddedToWorld(), "");
         check("spawn egg cow allowed", egg != null && egg.isAddedToWorld(), "");
         check("command cow allowed", command != null && command.isAddedToWorld(), "");
+        check("summoned cow allowed (another mod's ritual)", summoned != null && summoned.isAddedToWorld(), "");
+        check("triggered cow allowed", triggered != null && triggered.isAddedToWorld(), "");
+        for (Entity e : new Entity[] { summoned, triggered })
+            if (e != null && e.isAddedToWorld())
+                e.discard();
         check("spawner zombie allowed", zombie != null && zombie.isAddedToWorld(), "");
         check("structure villager allowed", villager != null && villager.isAddedToWorld(), "");
         if (zombie != null)
@@ -580,12 +589,20 @@ public class SelfTestNew {
                 + " vehicle=" + zombie.getVehicle());
         zombie.discard();
 
-        // Lightning trap horse
+        // Skeleton horses are undead: the lightning trap and the horses of its riders appear
         net.minecraft.world.entity.animal.horse.SkeletonHorse horse = EntityType.SKELETON_HORSE.create(level);
         horse.setTrap(true);
         horse.moveTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0, 0);
         level.addFreshEntity(horse);
-        check("trap horse refused after 100%", !horse.isAddedToWorld(), "");
+        Entity riderHorse = EntityType.SKELETON_HORSE.spawn(level, pos, MobSpawnType.TRIGGERED);
+        Entity structureHorse = EntityType.SKELETON_HORSE.spawn(level, pos, MobSpawnType.STRUCTURE);
+        check("skeleton horses allowed after 100% (trap included)", horse.isAddedToWorld()
+                && riderHorse != null && riderHorse.isAddedToWorld() && structureHorse != null && structureHorse.isAddedToWorld(),
+                "trap=" + horse.isAddedToWorld() + " rider=" + (riderHorse != null && riderHorse.isAddedToWorld())
+                        + " structure=" + (structureHorse != null && structureHorse.isAddedToWorld()));
+        for (Entity e : new Entity[] { horse, riderHorse, structureHorse })
+            if (e != null && e.isAddedToWorld())
+                e.discard();
 
         // New bee nests: empty from 100% on, with bees before
         check("bee nest empty after the end", beeNest(level, pos.offset(0, 0, 0)) == 0, "");

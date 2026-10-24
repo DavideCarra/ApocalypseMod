@@ -137,20 +137,33 @@ public class Generator {
         }
     }
 
+    // Work of a catch up, in chunks processed on time: steps applied to a chunk, and
+    // columns whose falling ash lands (the heavy part), that cost about one chunk
+    private static final int CATCH_UP_STEPS_PER_CHUNK = 16;
+    private static final int LANDING_COLUMNS_PER_CHUNK = 16;
+    // Columns of the last chunk transformed whose falling ash lands after the pass
+    private static int lastLandingColumns;
+
+    /**
+     * Processes the chunk for the step the world has reached.
+     *
+     * @return the work it took, in chunks processed for one step: 1 for a chunk processed
+     *         on time (or skipped), more for a catch up of many steps (see DayTracker)
+     */
     @SuppressWarnings("resource")
-    public static void processChunk(ChunkToProcess chunkInfo) {
+    public static float processChunk(ChunkToProcess chunkInfo) {
         try {
             final ServerLevel level = chunkInfo.getLevel();
             final int chunkX = chunkInfo.getChunkX();
             final int chunkZ = chunkInfo.getChunkZ();
 
             if (!level.getServer().isSameThread() || !level.hasChunk(chunkX, chunkZ)) {
-                return;
+                return 1f;
             }
 
             // Process only overworld
             if (level.dimension() != Level.OVERWORLD) {
-                return;
+                return 1f;
             }
 
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
@@ -174,13 +187,19 @@ public class Generator {
 
             // If apocalypse has ended, skip ALL processing
             if (over && savedStep == PHASE_DONE) {
-                return;
+                return 1f;
             }
 
             // Skip if already processed for this step or later
             if (currentStep <= savedStep) {
-                return;
+                return 1f;
             }
+
+            // Steps applied: every one after the saved step (step 0 never applies)
+            final int firstStep = Math.max(savedStep + 1, 0);
+            int steps = currentStep - firstStep + 1;
+            if (firstStep == 0 && steps > 1)
+                steps--;
 
             boolean hadChanges = false;
 
@@ -192,7 +211,10 @@ public class Generator {
 
             // PHASE 2: Surface transformation, once for every step the chunk missed
             // (e.g. while nobody was near it), so it ends up like the rest of the world
+            lastLandingColumns = 0;
             hadChanges |= transformSurface(chunk, level, percent, savedStep, currentStep);
+            final float work = 1f + (steps - 1) / (float) CATCH_UP_STEPS_PER_CHUNK
+                    + lastLandingColumns / (float) LANDING_COLUMNS_PER_CHUNK;
 
             // Set phase to PHASE_DONE, to stop processing
             if (over) {
@@ -205,10 +227,12 @@ public class Generator {
             if (hadChanges && !ChunkLightSync.resendWhenLit(chunk)) {
                 updateClients(chunk, level);
             }
+            return work;
 
         } catch (Exception e) {
             System.err.println("[Apocalypse] Error processing chunk: " + e.getMessage());
             e.printStackTrace();
+            return 1f;
         }
     }
 
@@ -688,6 +712,7 @@ public class Generator {
         // The falling ash of a catch up lands after the pass, as the falling blocks did
         // (after the whole batch of chunks when there is one), before the light markers
         if (chunkFalls != null) {
+            lastLandingColumns = chunkFalls.size();
             for (List<BlockPos> falls : chunkFalls) {
                 pendingFalls.add(new PendingFalls(level, falls, ashState));
             }
