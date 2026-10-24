@@ -15,6 +15,7 @@ import net.minecraft.world.RandomSequences;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.dimension.LevelStem;
+import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.storage.ServerLevelData;
 import org.spongepowered.asm.mixin.Mixin;
@@ -49,8 +50,8 @@ public class ServerLevelMixin {
 
         try {
 
-            // Reload config
-            ConfigManager.load(); 
+            // Load the config of this world
+            ConfigManager.load(storageAccess.getLevelPath(LevelResource.ROOT));
             JudgementDayMod.LOGGER
                     .info("[JudgementDayMixin] Config reloaded: apocalypseActive = " + ConfigManager.apocalypseActive);
 

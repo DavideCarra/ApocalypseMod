@@ -1,6 +1,7 @@
 package com.creatormc.judgementdaymod.handlers;
 
 import com.creatormc.judgementdaymod.models.ClientApocalypseData;
+import com.creatormc.judgementdaymod.models.ClientConfig;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -19,8 +20,8 @@ public class ApocalypseHudOverlay {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
 
-        // Only render in-game (not in menu)
-        if (mc.player == null || level == null)
+        // Only render in-game (not in menu), if this player and the server want it
+        if (mc.player == null || level == null || !ClientConfig.dayCounterShown())
             return;
 
         int maxDay = ClientApocalypseData.maxDays;

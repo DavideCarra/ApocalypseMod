@@ -17,6 +17,7 @@ import net.minecraft.server.MinecraftServer;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.storage.LevelResource;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -105,10 +106,16 @@ public class DayTracker {
             // This happens when a full day passes, or when players sleep or use /time set
             // day
             if (currentDayTime < lastDayTime) {
-                ConfigManager.apocalypseCurrentDay++;
-                ConfigManager.save();
-                UnattendedChunkHandler.onNewDay(overworld);
-                Generator.handleDayEvent();
+                if (ConfigManager.startDelayDays > 0) {
+                    // Normal play before the apocalypse starts counting: the day stays put
+                    ConfigManager.startDelayDays--;
+                    ConfigManager.save();
+                } else {
+                    ConfigManager.apocalypseCurrentDay++;
+                    ConfigManager.save();
+                    UnattendedChunkHandler.onNewDay(overworld);
+                    Generator.handleDayEvent();
+                }
 
                 // Every player draws the new day
                 NetworkHandler.sendToAll(ApocalypseSyncPacket.current());
@@ -181,7 +188,7 @@ public class DayTracker {
 
     @SubscribeEvent
     public static void onServerStarting(ServerStartingEvent event) {
-        ConfigManager.load();
+        ConfigManager.load(event.getServer().getWorldPath(LevelResource.ROOT));
 
         // Reset variables
         tickCount = 0;

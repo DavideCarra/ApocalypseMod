@@ -147,7 +147,8 @@ public class SelfTestNew {
                 int index = buf.readUnsignedByte();
                 if (index == 1)
                     events.add("SYNC day=" + buf.readInt() + " max=" + buf.readInt() + " end=" + buf.readInt()
-                            + " damage=" + buf.readInt() + " active=" + buf.readBoolean());
+                            + " damage=" + buf.readInt() + " active=" + buf.readBoolean() + " delayed=" + buf.readBoolean()
+                            + " dayCounter=" + buf.readBoolean() + " heatBar=" + buf.readBoolean());
                 else if (index == 2)
                     events.add("TITLE " + buf.readEnum(com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase.class));
             } else if (msg instanceof net.minecraft.network.protocol.game.ClientboundStopSoundPacket) {
@@ -180,13 +181,14 @@ public class SelfTestNew {
         return r;
     }
 
-    static void multiplayerTick() {
+    static void multiplayerTick() throws Exception {
         int tick = SelfTestCommon.tick;
         ServerLevel level = SelfTestCommon.server.getLevel(Level.OVERWORLD);
         for (Recorded r : players)
             r.drain();
         if (stage == 0 && tick >= 20) {
             SelfTestCommon.freezeWorld(level); // the clock only moves when the test sets it
+            worldConfigs();
             defaults();
             ConfigManager.apocalypseCurrentDay = 9; // phase 1 starts on day 10 (50 days)
             Generator.resetState();
@@ -201,18 +203,37 @@ public class SelfTestNew {
                         r.has("SYNC day=9 max=50 end=200 damage=60 active=false"), r.events.toString());
             for (Recorded r : players)
                 r.events.clear();
+            // Two days of normal play left: a new day does not count
+            ConfigManager.startDelayDays = 2;
             level.setDayTime(23990);
+            stage = 10;
+            waitUntil = tick + 2;
+        } else if (stage == 10 && tick >= waitUntil) {
+            level.setDayTime(24010);
+            stage = 11;
+            waitUntil = tick + 5;
+        } else if (stage == 11 && tick >= waitUntil) {
+            check("delay: the day stays put", ConfigManager.apocalypseCurrentDay == 9 && ConfigManager.startDelayDays == 1,
+                    "day=" + ConfigManager.apocalypseCurrentDay + " delay=" + ConfigManager.startDelayDays);
+            for (Recorded r : players)
+                check("delay: " + r.player.getGameProfile().getName() + " hides the day counter",
+                        r.has("SYNC day=9 max=50 end=200 damage=60 active=false delayed=true"), r.events.toString());
+            for (Recorded r : players)
+                r.events.clear();
+            ConfigManager.startDelayDays = 0;
+            ConfigManager.showHeatBar = false; // the server hides the heat bar
+            level.setDayTime(47990);
             stage = 2;
             waitUntil = tick + 2;
         } else if (stage == 2 && tick >= waitUntil) {
-            level.setDayTime(24010); // a new day
+            level.setDayTime(48010); // a new day
             stage = 3;
             waitUntil = tick + 5;
         } else if (stage == 3 && tick >= waitUntil) {
             check("multiplayer: the day changes once", ConfigManager.apocalypseCurrentDay == 10, "day=" + ConfigManager.apocalypseCurrentDay);
             for (Recorded r : players) {
                 String n = r.player.getGameProfile().getName();
-                check("multiplayer: " + n + " gets the new day", r.has("SYNC day=10 max=50 end=200 damage=48"), r.events.toString());
+                check("multiplayer: " + n + " gets the new day", r.has("SYNC day=10 max=50 end=200 damage=48 active=false delayed=false dayCounter=true heatBar=false"), r.events.toString());
                 check("multiplayer: " + n + " gets the phase title", r.has("TITLE PHASE_2"), r.events.toString());
                 check("multiplayer: " + n + " gets the phase music", r.has("STOPSOUND") && r.has("SOUND "), r.events.toString());
             }
@@ -222,19 +243,85 @@ public class SelfTestNew {
                 SelfTestCommon.server.getPlayerList().remove(r.player);
             players.clear();
             mpDayBefore = ConfigManager.apocalypseCurrentDay;
-            level.setDayTime(47990);
+            level.setDayTime(71990);
             stage = 4;
             waitUntil = tick + 2;
         } else if (stage == 4 && tick >= waitUntil) {
-            level.setDayTime(48010);
+            level.setDayTime(72010);
             stage = 5;
             waitUntil = tick + 5;
         } else if (stage == 5 && tick >= waitUntil) {
             check("multiplayer: days go on with nobody online", ConfigManager.apocalypseCurrentDay == mpDayBefore + 1,
                     "before=" + mpDayBefore + " now=" + ConfigManager.apocalypseCurrentDay);
+            ConfigManager.showHeatBar = true;
             defaults();
             SelfTestCommon.log("RESULT fails=" + fails);
             SelfTestCommon.finish();
+        }
+    }
+
+    /** Each world has its own config: created for a new world, taken over for an old one. */
+    static void worldConfigs() throws Exception {
+        java.nio.file.Path world = SelfTestCommon.server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT);
+        java.nio.file.Path own = world.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties");
+        check("config: the world has its own config", java.nio.file.Files.exists(own), own.toString());
+
+        java.nio.file.Path base = net.minecraftforge.fml.loading.FMLPaths.GAMEDIR.get().resolve("cfgtest");
+        deleteTree(base);
+        java.nio.file.Path shared = net.minecraftforge.fml.loading.FMLPaths.CONFIGDIR.get().resolve("judgementdaymod-apocalypse.properties");
+        String sharedBefore = java.nio.file.Files.readString(shared);
+        try {
+            // Old shared config of a world on day 77
+            java.nio.file.Files.writeString(shared, "apocalypseCurrentDay=77\napocalypseMaxDays=40\napocalypseEndDay=150\nminDamageHeight=30\nminWaterEvaporationHeight=30\nstartBeforeApocalypse=false\nlastAppliedPhase=5\napocalypseActive=true\n");
+
+            // A new world: day 0 and the settings of the defaults file
+            java.nio.file.Path fresh = base.resolve("fresh");
+            java.nio.file.Files.createDirectories(fresh);
+            ConfigManager.load(fresh);
+            check("config: a new world starts on day 0 with the defaults", ConfigManager.apocalypseCurrentDay == 0
+                    && ConfigManager.apocalypseMaxDays == 50 && !ConfigManager.apocalypseActive
+                    && java.nio.file.Files.exists(fresh.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties")),
+                    "day=" + ConfigManager.apocalypseCurrentDay + " max=" + ConfigManager.apocalypseMaxDays + " active=" + ConfigManager.apocalypseActive);
+
+            // A world the mod ran in before: carries on from the old shared config
+            java.nio.file.Path old = base.resolve("old");
+            java.nio.file.Files.createDirectories(old.resolve("data"));
+            java.nio.file.Files.writeString(old.resolve("data").resolve("judgementday_chunkdata.dat"), "");
+            ConfigManager.load(old);
+            check("config: an old world carries on from the shared config", ConfigManager.apocalypseCurrentDay == 77
+                    && ConfigManager.apocalypseMaxDays == 40 && ConfigManager.apocalypseActive && ConfigManager.lastAppliedPhase == 5,
+                    "day=" + ConfigManager.apocalypseCurrentDay + " max=" + ConfigManager.apocalypseMaxDays);
+
+            // Then each world keeps its own state
+            ConfigManager.apocalypseCurrentDay = 78;
+            ConfigManager.save();
+            ConfigManager.load(fresh);
+            int freshDay = ConfigManager.apocalypseCurrentDay;
+            ConfigManager.load(old);
+            check("config: each world keeps its own day", freshDay == 0 && ConfigManager.apocalypseCurrentDay == 78,
+                    "fresh=" + freshDay + " old=" + ConfigManager.apocalypseCurrentDay);
+
+            // An invalid value is ignored (the default stays)
+            java.nio.file.Files.writeString(fresh.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties"),
+                    "apocalypseMaxDays=abc\napocalypseCurrentDay=3\nstartBeforeApocalypse=false\nstartDelayDays=4\nshowHeatBar=false\n");
+            ConfigManager.load(fresh);
+            check("config: invalid values ignored, new settings read", ConfigManager.apocalypseMaxDays == 50
+                    && ConfigManager.apocalypseCurrentDay == 3 && ConfigManager.startDelayDays == 4 && !ConfigManager.showHeatBar,
+                    "max=" + ConfigManager.apocalypseMaxDays + " day=" + ConfigManager.apocalypseCurrentDay
+                            + " delay=" + ConfigManager.startDelayDays + " heat=" + ConfigManager.showHeatBar);
+        } finally {
+            java.nio.file.Files.writeString(shared, sharedBefore);
+            ConfigManager.load(world);
+            deleteTree(base);
+        }
+    }
+
+    static void deleteTree(java.nio.file.Path dir) throws java.io.IOException {
+        if (!java.nio.file.Files.exists(dir))
+            return;
+        try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(dir)) {
+            for (java.nio.file.Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList())
+                java.nio.file.Files.delete(p);
         }
     }
 
