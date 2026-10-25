@@ -708,6 +708,8 @@ public class SelfTestCommon {
         preds.add(h -> h.is(Biomes.OLD_GROWTH_SPRUCE_TAIGA) || h.is(Biomes.OLD_GROWTH_PINE_TAIGA));
         names.add("jungle");
         preds.add(h -> h.is(BiomeTags.IS_JUNGLE));
+        names.add("mushroom");
+        preds.add(h -> h.is(Biomes.MUSHROOM_FIELDS) || h.is(Biomes.DARK_FOREST));
 
         String only = props.getProperty("regions");
         BlockPos origin = new BlockPos(0, 64, 0);
@@ -851,7 +853,7 @@ public class SelfTestCommon {
     }
 
     static void lightReport(ServerLevel level) {
-        int fires = 0, firesLit = 0, columns = 0, skyBad = 0, logs = 0, leaves = 0;
+        int fires = 0, firesLit = 0, columns = 0, skyBad = 0, logs = 0, leaves = 0, mushroom = 0;
         for (int[] r : regions) {
             for (int x = r[0] - 2; x <= r[0] + 2; x++) {
                 for (int z = r[1] - 2; z <= r[1] + 2; z++) {
@@ -893,6 +895,9 @@ public class SelfTestCommon {
                             for (int y = top - 1; y > top - 40; y--) {
                                 BlockPos p = new BlockPos(wx, y, wz);
                                 BlockState st = chunk.getBlockState(p);
+                                if (st.is(Blocks.RED_MUSHROOM_BLOCK) || st.is(Blocks.BROWN_MUSHROOM_BLOCK)
+                                        || st.is(Blocks.MUSHROOM_STEM))
+                                    mushroom++;
                                 if (st.is(net.minecraft.tags.BlockTags.LOGS))
                                     logs++;
                                 else if (st.is(net.minecraft.tags.BlockTags.LEAVES))
@@ -908,7 +913,7 @@ public class SelfTestCommon {
             }
         }
         log("LIGHT columns=" + columns + " skyBelow15=" + skyBad + " fires=" + fires + " firesLit=" + firesLit
-                + " logs=" + logs + " leaves=" + leaves + " badChunks=" + badPerChunk);
+                + " logs=" + logs + " leaves=" + leaves + " mushroom=" + mushroom + " badChunks=" + badPerChunk);
     }
 
     static final java.util.Map<String, Integer> badPerChunk = new java.util.TreeMap<>();
