@@ -703,11 +703,18 @@ public class SelfTestCommon {
         preds.add(h -> h.is(BiomeTags.IS_BEACH));
         names.add("swamp");
         preds.add(h -> h.is(Biomes.SWAMP) || h.is(Biomes.MANGROVE_SWAMP));
+        // Only when asked by name (regions=...): not part of the default set
+        names.add("tall_taiga");
+        preds.add(h -> h.is(Biomes.OLD_GROWTH_SPRUCE_TAIGA) || h.is(Biomes.OLD_GROWTH_PINE_TAIGA));
+        names.add("jungle");
+        preds.add(h -> h.is(BiomeTags.IS_JUNGLE));
 
         String only = props.getProperty("regions");
         BlockPos origin = new BlockPos(0, 64, 0);
         for (int i = 0; i < preds.size(); i++) {
             if (only != null && !("," + only + ",").contains("," + names.get(i) + ","))
+                continue;
+            if (only == null && i >= 6)
                 continue;
             Pair<BlockPos, Holder<Biome>> found = level.findClosestBiome3d(preds.get(i), origin, 6400, 32, 64);
             if (found == null) {
@@ -844,7 +851,7 @@ public class SelfTestCommon {
     }
 
     static void lightReport(ServerLevel level) {
-        int fires = 0, firesLit = 0, columns = 0, skyBad = 0;
+        int fires = 0, firesLit = 0, columns = 0, skyBad = 0, logs = 0, leaves = 0;
         for (int[] r : regions) {
             for (int x = r[0] - 2; x <= r[0] + 2; x++) {
                 for (int z = r[1] - 2; z <= r[1] + 2; z++) {
@@ -869,12 +876,27 @@ public class SelfTestCommon {
                                         log("SKYBAD " + wx + " " + top + " " + wz + " sky=" + sky + " lowestSource="
                                                 + chunk.getSkyLightSources().getLowestSourceY(lx, lz) + " top="
                                                 + chunk.getBlockState(new BlockPos(wx, top - 1, wz)) + " up:" + up);
+                                        if (skyBad <= 3) {
+                                            // What the column and its sides hold above the top
+                                            StringBuilder col = new StringBuilder();
+                                            for (int y = top - 2; y < top + 30; y++) {
+                                                BlockState c = chunk.getBlockState(new BlockPos(wx, y, wz));
+                                                if (!c.isAir())
+                                                    col.append(' ').append(y).append('=').append(c.getBlock().getDescriptionId()
+                                                            .replace("block.minecraft.", "").replace("block.judgementday.", ""));
+                                            }
+                                            log("SKYCOL " + wx + " " + wz + col);
+                                        }
                                     }
                                 }
                             }
                             for (int y = top - 1; y > top - 40; y--) {
                                 BlockPos p = new BlockPos(wx, y, wz);
                                 BlockState st = chunk.getBlockState(p);
+                                if (st.is(net.minecraft.tags.BlockTags.LOGS))
+                                    logs++;
+                                else if (st.is(net.minecraft.tags.BlockTags.LEAVES))
+                                    leaves++;
                                 if (st.is(Blocks.FIRE)) {
                                     fires++;
                                     if (level.getBrightness(LightLayer.BLOCK, p) >= 15)
@@ -886,7 +908,7 @@ public class SelfTestCommon {
             }
         }
         log("LIGHT columns=" + columns + " skyBelow15=" + skyBad + " fires=" + fires + " firesLit=" + firesLit
-                + " badChunks=" + badPerChunk);
+                + " logs=" + logs + " leaves=" + leaves + " badChunks=" + badPerChunk);
     }
 
     static final java.util.Map<String, Integer> badPerChunk = new java.util.TreeMap<>();

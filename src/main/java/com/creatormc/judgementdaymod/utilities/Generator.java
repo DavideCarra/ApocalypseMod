@@ -151,6 +151,10 @@ public class Generator {
     // columns whose falling ash lands (the heavy part), that cost about one chunk
     private static final int CATCH_UP_STEPS_PER_CHUNK = 16;
     private static final int LANDING_COLUMNS_PER_CHUNK = 16;
+    // Blocks burned below the block a step reached (whole trees, see transformSurface)
+    // that cost about one chunk
+    private static final int BURNT_BLOCKS_PER_CHUNK = 1024;
+    private static int lastBurntBlocks;
     // Columns of the last chunk transformed whose falling ash lands after the pass
     private static int lastLandingColumns;
 
@@ -195,13 +199,13 @@ public class Generator {
             ChunkPos chunkPos = chunk.getPos();
             int savedStep = data.getPhase(chunkPos);
 
-            // If apocalypse has ended, skip ALL processing
-            if (over && savedStep == PHASE_DONE) {
-                return 1f;
-            }
-
-            // Skip if already processed for this step or later
-            if (currentStep <= savedStep) {
+            // Skip if already processed for this step or later (or done for good after the
+            // end). Snow and ice melt from the start of the apocalypse on: such a chunk is
+            // looked at for them once (none forms again then, see BiomeMixin)
+            if ((over && savedStep == PHASE_DONE) || currentStep <= savedStep) {
+                if (apocalypseStarted() && meltChecked.add(chunkPos.toLong())) {
+                    meltOnly(chunk, level);
+                }
                 return 1f;
             }
 
@@ -222,9 +226,14 @@ public class Generator {
             // PHASE 2: Surface transformation, once for every step the chunk missed
             // (e.g. while nobody was near it), so it ends up like the rest of the world
             lastLandingColumns = 0;
+            lastBurntBlocks = 0;
             hadChanges |= transformSurface(chunk, level, percent, savedStep, currentStep, over);
+            if (apocalypseStarted()) {
+                meltChecked.add(chunkPos.toLong());
+            }
             final float work = 1f + (steps - 1) / (float) CATCH_UP_STEPS_PER_CHUNK
-                    + lastLandingColumns / (float) LANDING_COLUMNS_PER_CHUNK;
+                    + lastLandingColumns / (float) LANDING_COLUMNS_PER_CHUNK
+                    + lastBurntBlocks / (float) BURNT_BLOCKS_PER_CHUNK;
 
             // Set phase to PHASE_DONE, to stop processing
             if (over) {
@@ -444,7 +453,8 @@ public class Generator {
      * current progress for the last one). A chunk processed on time only misses the
      * current step, so this is a single pass, exactly as before.
      *
-     * From the first step on, the snow and ice on top of each column melt first.
+     * From the start of the apocalypse on, the snow and ice on top of each column melt
+     * first (see meltColumn).
      *
      * @param over the apocalypse is over: what would catch fire is left empty instead, its
      *             fires burned out long ago (a chunk processed on time is never processed
@@ -506,60 +516,14 @@ public class Generator {
         // Cache heightmap for fast surface access
         final Heightmap wsHM = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
 
-        // Snow and ice melt from the first step on. Their palettes tell at once if the
-        // chunk has any: the columns are only looked at then
-        boolean melt = false;
-        if (currentStep >= 1) {
-            for (LevelChunkSection section : sections) {
-                if (section != null && !section.hasOnlyAir() && section.maybeHas(Analyzer::isMeltable)) {
-                    melt = true;
-                    break;
-                }
-            }
-        }
+        // Snow and ice melt from the start of the apocalypse on (see meltColumn)
+        final boolean melt = apocalypseStarted() && hasMeltable(sections);
 
         // Single pass over all columns
         for (int lx = 0; lx < 16; lx++) {
             for (int lz = 0; lz < 16; lz++) {
-                // The snow and ice on top of the column melt, down to the first block that
-                // is neither: ice that touches water (a frozen sea, the part of an iceberg in
-                // the sea) turns into water, the rest into air. The steps below then find
-                // what they left
-                if (melt) {
-                    int y = wsHM.getFirstAvailable(lx, lz) - 1;
-                    while (true) {
-                        final int sec = (y >> 4) - minSection;
-                        if (sec < 0 || sec >= sectionsCount || sections[sec] == null)
-                            break;
-                        final BlockState old = sections[sec].getBlockState(lx, y & 15, lz);
-                        if (!Analyzer.isMeltable(old))
-                            break;
-                        final BlockPos pos = new BlockPos(startX + lx, y, startZ + lz);
-                        final BlockState below = chunk.getBlockState(pos.below());
-                        final boolean toWater = Analyzer.isIce(old)
-                                && (below.is(Blocks.WATER) || touchesWater(level, chunk, pos));
-                        final BlockState melted = toWater ? Blocks.WATER.defaultBlockState() : airState;
-                        sections[sec].setBlockState(lx, y & 15, lz, melted, false);
-                        dirtySection[sec] = true;
-                        hadChanges = true;
-                        if (LightEngine.hasDifferentLightProperties(chunk, pos, old, melted)) {
-                            chunk.getSkyLightSources().update(chunk, lx, y, lz);
-                            lightChecks.add(pos);
-                        }
-                        if (toWater) {
-                            level.scheduleTick(pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
-                        } else if (below.hasProperty(BlockStateProperties.SNOWY) && below.getValue(BlockStateProperties.SNOWY)) {
-                            // Grass, podzol or mycelium no longer under snow (vanilla updates it
-                            // through the shape update the direct edit skips)
-                            final int belowSec = ((y - 1) >> 4) - minSection;
-                            if (belowSec >= 0 && belowSec < sectionsCount && sections[belowSec] != null) {
-                                sections[belowSec].setBlockState(lx, (y - 1) & 15, lz,
-                                        below.setValue(BlockStateProperties.SNOWY, false), false);
-                                dirtySection[belowSec] = true;
-                            }
-                        }
-                        y--;
-                    }
+                if (melt && meltColumn(chunk, level, sections, wsHM, lx, lz, dirtySection, lightChecks)) {
+                    hadChanges = true;
                 }
 
                 // Highest non air block of the column, read from the heightmap for the first
@@ -607,6 +571,8 @@ public class Generator {
                     BlockState newState = ashState;
                     Block newBlock = ashBlock;
                     int targetY = topY;
+                    // The block burns (see below)
+                    boolean burning = false;
 
                     // If current block is skippable (ash/air), find first solid block below
                     if (Analyzer.isSkippable(currentBlock)) {
@@ -635,6 +601,7 @@ public class Generator {
                                 if (Analyzer.canBurn(foundBlock, null, null)) {
                                     newState = burntState;
                                     newBlock = burntBlock;
+                                    burning = true;
                                 } else if (Analyzer.isEvaporable(foundBlock)) {
                                     newState = airState;
                                     newBlock = null;
@@ -654,6 +621,7 @@ public class Generator {
                         if (Analyzer.canBurn(currentBlock, null, null)) {
                             newState = burntState;
                             newBlock = burntBlock;
+                            burning = true;
                         } else if (Analyzer.isEvaporable(currentBlock)) {
                             newState = airState;
                             newBlock = null;
@@ -701,10 +669,64 @@ public class Generator {
                                 removeBlockEntity(chunk, pos);
                             }
 
+                            // The fire takes the whole part of the column that burns at once, not
+                            // a block per step (a tall tree would outlast the apocalypse): down
+                            // from here to the first block that does not burn, passing the air,
+                            // ash and fire on the way. What burned is left empty and the fire
+                            // stays at the bottom, on what stopped it (none after the end). A
+                            // column with nothing more to burn below is as before
+                            int fireY = targetY;
+                            if (burning) {
+                                for (int y = targetY - 1; y > minBuildHeight; y--) {
+                                    final int s = (y >> 4) - minSection;
+                                    if (s < 0 || s >= sectionsCount || sections[s] == null)
+                                        break;
+                                    final BlockState st = sections[s].getBlockState(lx, y & 15, lz);
+                                    if (Analyzer.isSkippable(st)) {
+                                        // Ash left hanging falls
+                                        if (st.getBlock() instanceof FallingBlock fallingBlock) {
+                                            level.scheduleTick(new BlockPos(startX + lx, y, startZ + lz), fallingBlock, 1);
+                                        }
+                                        continue;
+                                    }
+                                    if (!Analyzer.canBurn(st, null, null))
+                                        break;
+                                    final BlockPos burnt = new BlockPos(startX + lx, y, startZ + lz);
+                                    if (st.hasBlockEntity()) {
+                                        removeBlockEntity(chunk, burnt);
+                                    }
+                                    sections[s].setBlockState(lx, y & 15, lz, airState, false);
+                                    dirtySection[s] = true;
+                                    lastBurntBlocks++;
+                                    // Its own update, top to bottom: the block on top may be one
+                                    // that lets the light through (a vine), which updates nothing
+                                    if (LightEngine.hasDifferentLightProperties(chunk, burnt, st, airState)) {
+                                        chunk.getSkyLightSources().update(chunk, lx, y, lz);
+                                        lightChecks.add(burnt);
+                                    }
+                                    fireY = y;
+                                }
+                                if (fireY != targetY) {
+                                    newState = airState;
+                                    newBlock = null;
+                                    // What rested on top of it falls
+                                    final BlockState aboveState = level.getBlockState(pos.above());
+                                    if (aboveState.getBlock() instanceof FallingBlock fallingBlock) {
+                                        level.scheduleTick(pos.above(), fallingBlock, 1);
+                                    }
+                                    if (burntBlock == fireBlock) {
+                                        final int fireSec = (fireY >> 4) - minSection;
+                                        final BlockPos firePos = new BlockPos(startX + lx, fireY, startZ + lz);
+                                        sections[fireSec].setBlockState(lx, fireY & 15, lz, fireState, false);
+                                        level.scheduleTick(firePos, fireBlock, 1);
+                                    }
+                                }
+                            }
+
                             targetSection.setBlockState(lx, finalLy, lz, newState, false);
                             dirtySection[finalSecIndex] = true;
                             hadChanges = true;
-                            searchFrom = targetY - 1;
+                            searchFrom = fireY - 1;
 
                             // Light management (e.g. water or snow gone, ash in place of a slab)
                             if (newBlock != fireBlock
@@ -804,6 +826,112 @@ public class Generator {
         }
 
         return hadChanges;
+    }
+
+    /**
+     * The apocalypse has started: the preparation days and the delay before it are over.
+     */
+    public static boolean apocalypseStarted() {
+        return ConfigManager.apocalypseCurrentDay >= 0 && ConfigManager.startDelayDays <= 0;
+    }
+
+    // Chunks already looked at for snow and ice since the server started (main thread)
+    private static final it.unimi.dsi.fastutil.longs.LongOpenHashSet meltChecked = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
+    /**
+     * The chunk has snow or ice somewhere: their palettes tell at once.
+     */
+    private static boolean hasMeltable(LevelChunkSection[] sections) {
+        for (LevelChunkSection section : sections) {
+            if (section != null && !section.hasOnlyAir() && section.maybeHas(Analyzer::isMeltable)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The snow and ice on top of the column melt, down to the first block that is
+     * neither: ice that touches water (a frozen sea, the part of an iceberg in the sea)
+     * turns into water, the rest into air.
+     *
+     * @return true if a block changed
+     */
+    private static boolean meltColumn(LevelChunk chunk, ServerLevel level, LevelChunkSection[] sections, Heightmap wsHM,
+            int lx, int lz, boolean[] dirtySection, LightChecks lightChecks) {
+        final int minSection = chunk.getMinSection();
+        final int sectionsCount = sections.length;
+        final BlockState airState = Blocks.AIR.defaultBlockState();
+        boolean changed = false;
+        int y = wsHM.getFirstAvailable(lx, lz) - 1;
+        while (true) {
+            final int sec = (y >> 4) - minSection;
+            if (sec < 0 || sec >= sectionsCount || sections[sec] == null)
+                break;
+            final BlockState old = sections[sec].getBlockState(lx, y & 15, lz);
+            if (!Analyzer.isMeltable(old))
+                break;
+            final BlockPos pos = new BlockPos((chunk.getPos().x << 4) + lx, y, (chunk.getPos().z << 4) + lz);
+            final BlockState below = chunk.getBlockState(pos.below());
+            final boolean toWater = Analyzer.isIce(old)
+                    && (below.is(Blocks.WATER) || touchesWater(level, chunk, pos));
+            final BlockState melted = toWater ? Blocks.WATER.defaultBlockState() : airState;
+            sections[sec].setBlockState(lx, y & 15, lz, melted, false);
+            dirtySection[sec] = true;
+            changed = true;
+            if (LightEngine.hasDifferentLightProperties(chunk, pos, old, melted)) {
+                chunk.getSkyLightSources().update(chunk, lx, y, lz);
+                lightChecks.add(pos);
+            }
+            if (toWater) {
+                level.scheduleTick(pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
+            } else if (below.hasProperty(BlockStateProperties.SNOWY) && below.getValue(BlockStateProperties.SNOWY)) {
+                // Grass, podzol or mycelium no longer under snow (vanilla updates it
+                // through the shape update the direct edit skips)
+                final int belowSec = ((y - 1) >> 4) - minSection;
+                if (belowSec >= 0 && belowSec < sectionsCount && sections[belowSec] != null) {
+                    sections[belowSec].setBlockState(lx, (y - 1) & 15, lz,
+                            below.setValue(BlockStateProperties.SNOWY, false), false);
+                    dirtySection[belowSec] = true;
+                }
+            }
+            y--;
+        }
+        return changed;
+    }
+
+    /**
+     * Melts the snow and ice on top of a chunk that is not transformed now (it already
+     * had the current step), and sends it again if anything changed.
+     */
+    private static void meltOnly(LevelChunk chunk, ServerLevel level) {
+        final LevelChunkSection[] sections = chunk.getSections();
+        if (!hasMeltable(sections))
+            return;
+        final boolean[] dirtySection = new boolean[sections.length];
+        final LightChecks lightChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, true);
+        final Heightmap wsHM = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
+        boolean changed = false;
+        for (int lx = 0; lx < 16; lx++) {
+            for (int lz = 0; lz < 16; lz++) {
+                changed |= meltColumn(chunk, level, sections, wsHM, lx, lz, dirtySection, lightChecks);
+            }
+        }
+        if (!changed)
+            return;
+        for (int i = 0; i < sections.length; i++) {
+            if (dirtySection[i] && sections[i] != null) {
+                sections[i].recalcBlockCounts();
+            }
+        }
+        chunk.setUnsaved(true);
+        Heightmap.primeHeightmaps(chunk, chunk.getStatus().heightmapsAfter());
+        if (lightChecks.submit()) {
+            ChunkLightSync.lightQueued(level, chunk.getPos().x, chunk.getPos().z);
+        }
+        if (!ChunkLightSync.resendWhenLit(chunk)) {
+            updateClients(chunk, level);
+        }
     }
 
     /**
@@ -1225,13 +1353,13 @@ public class Generator {
     }
 
     /**
-     * Snow and ice melt in the overworld from the first step on: none forms any more.
-     * Called from world generation threads too.
+     * Snow and ice melt in the overworld from the start of the apocalypse on: none forms
+     * any more. Called from world generation threads too.
      */
     public static boolean snowMelts(LevelReader level) {
         final Level world = level instanceof WorldGenLevel worldGen ? worldGen.getLevel()
                 : level instanceof Level l ? l : null;
-        return world != null && world.dimension() == Level.OVERWORLD && currentStep() >= 1;
+        return world != null && world.dimension() == Level.OVERWORLD && apocalypseStarted();
     }
 
     /**
@@ -1347,6 +1475,7 @@ public class Generator {
     }
 
     public static void resetState() {
+        meltChecked.clear();
         daysPerPhase = Math.max(1, ConfigManager.apocalypseMaxDays / 5);
         decelerateDaysPerPhase = daysPerPhase * 2;
         lastPlayedPhase = null;

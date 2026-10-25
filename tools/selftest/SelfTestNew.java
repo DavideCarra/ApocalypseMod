@@ -357,6 +357,7 @@ public class SelfTestNew {
             snowAndIce(level);
             meltOnTop(level);
             noFireAfterEnd(level);
+            tallTrees(level);
             stage = 1;
             waitUntil = tick + 60;
         } else if (stage == 1 && tick >= waitUntil) {
@@ -1000,19 +1001,23 @@ public class SelfTestNew {
         level.setBlock(waterPos, Blocks.WATER.defaultBlockState(), 2);
         net.minecraft.world.level.biome.Biome biome = level.getBiome(snowPos).value();
         defaults();
+        ConfigManager.apocalypseCurrentDay = -5;
         boolean snowBefore = biome.shouldSnow(level, snowPos);
         boolean iceBefore = level.getBiome(waterPos).value().shouldFreeze(level, waterPos, false);
-        ConfigManager.apocalypseCurrentDay = 10;
+        ConfigManager.apocalypseCurrentDay = 0;
+        ConfigManager.startDelayDays = 3;
+        boolean snowDelay = biome.shouldSnow(level, snowPos);
+        ConfigManager.startDelayDays = 0;
         boolean snowAfter = biome.shouldSnow(level, snowPos);
         boolean iceAfter = level.getBiome(waterPos).value().shouldFreeze(level, waterPos, false);
-        check("snow settles and water freezes before the first step", snowBefore && iceBefore,
-                "snow=" + snowBefore + " ice=" + iceBefore + " at " + snowPos.toShortString());
-        check("no new snow or ice from the first step", !snowAfter && !iceAfter, "snow=" + snowAfter + " ice=" + iceAfter);
+        check("snow settles and water freezes during the preparation and the delay", snowBefore && iceBefore && snowDelay,
+                "snow=" + snowBefore + " ice=" + iceBefore + " delay=" + snowDelay + " at " + snowPos.toShortString());
+        check("no new snow or ice from day 0", !snowAfter && !iceAfter, "snow=" + snowAfter + " ice=" + iceAfter);
         defaults();
     }
 
     static void meltOnTop(ServerLevel level) {
-        for (int round = 0; round < 2; round++) {
+        for (int round = 0; round < 3; round++) {
             BlockPos spot = coldSpot(level, 1 + round);
             if (spot == null)
                 return;
@@ -1044,9 +1049,10 @@ public class SelfTestNew {
                 level.setBlock(pillar.above(dy), Blocks.PACKED_ICE.defaultBlockState(), 2);
 
             defaults();
-            ApocalypseChunkData.get(level).setPhase(new ChunkPos(cx, cz), -1);
-            // round 0: day 5 (step 0, nothing melts), round 1: day 10 (step 1)
-            ConfigManager.apocalypseCurrentDay = round == 0 ? 5 : 10;
+            // round 0: day -5 (preparation, nothing melts); round 1: day 5 on a chunk already
+            // at step 0 (not transformed, only melted); round 2: day 10 (step 1)
+            ApocalypseChunkData.get(level).setPhase(new ChunkPos(cx, cz), round == 1 ? 0 : -1);
+            ConfigManager.apocalypseCurrentDay = round == 0 ? -5 : round == 1 ? 5 : 10;
             Generator.resetState();
             Generator.processChunk(new ChunkToProcess(level, cx, cz));
 
@@ -1075,10 +1081,12 @@ public class SelfTestNew {
             String detail = "snowLeft=" + snowLeft + " ground=" + ground + " grassLeft=" + grassLeft + " iceTop=" + iceTop
                     + " packedLeft=" + packed;
             if (round == 0) {
-                // Only the step itself (5% on day 5) may take the top block of a column
-                check("melt: nothing melts before the first step", snowLeft >= 5 && packed >= 2, detail);
+                check("melt: nothing melts during the preparation", snowLeft == 8 && packed == 3, detail);
+            } else if (round == 1) {
+                check("melt: from day 0 a chunk already at its step melts too",
+                        snowGone && groundClear && grassLeft == 8 && iceMelted && iceToWater && packed == 0, detail);
             } else {
-                check("melt: snow, ice and packed ice on top melt at the first step",
+                check("melt: snow, ice and packed ice on top melt when the step comes",
                         snowGone && groundClear && grassLeft > 0 && iceMelted && iceToWater && packed == 0, detail);
             }
             level.setChunkForced(cx, cz, false);
@@ -1121,6 +1129,63 @@ public class SelfTestNew {
         }
         check("fire: a forest catches fire before the end", fires[0] > 0, "fires=" + fires[0]);
         check("fire: no fire when catching up after the end", fires[1] == 0, "fires=" + fires[1]);
+        defaults();
+    }
+
+    /**
+     * A 25 block trunk under leaves, and leaves over a gap over a trunk: one step burns
+     * each column down to the ground, leaving the fire on it (none after the end).
+     */
+    static void tallTrees(ServerLevel level) {
+        for (int round = 0; round < 2; round++) {
+            int cx = 240 + round * 3, cz = 240;
+            level.setChunkForced(cx, cz, true);
+            level.getChunk(cx, cz);
+            int bx = (cx << 4) + 8, bz = (cz << 4) + 8;
+            int y0 = level.getMaxBuildHeight() - 80;
+            BlockPos[] cols = { new BlockPos(bx, y0, bz), new BlockPos(bx + 3, y0, bz) };
+            for (BlockPos c : cols) {
+                level.setBlock(c.below(), Blocks.STONE.defaultBlockState(), 2);
+                level.setBlock(c, Blocks.DIRT.defaultBlockState(), 2);
+                for (int dy = 1; dy <= 40; dy++)
+                    level.setBlock(c.above(dy), Blocks.AIR.defaultBlockState(), 2);
+            }
+            for (int dy = 1; dy <= 25; dy++)
+                level.setBlock(cols[0].above(dy), Blocks.SPRUCE_LOG.defaultBlockState(), 2);
+            for (int dy = 26; dy <= 28; dy++)
+                level.setBlock(cols[0].above(dy), Blocks.SPRUCE_LEAVES.defaultBlockState()
+                        .setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT, true), 2);
+            for (int dy = 1; dy <= 10; dy++)
+                level.setBlock(cols[1].above(dy), Blocks.OAK_LOG.defaultBlockState(), 2);
+            for (int dy = 15; dy <= 17; dy++)
+                level.setBlock(cols[1].above(dy), Blocks.OAK_LEAVES.defaultBlockState()
+                        .setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT, true), 2);
+            defaults();
+            // round 0: one step at 100% (day 50); round 1: catching up after the end
+            ApocalypseChunkData.get(level).setPhase(new ChunkPos(cx, cz), 4);
+            ConfigManager.apocalypseCurrentDay = round == 0 ? 50 : 200;
+            Generator.resetState();
+            Generator.processChunk(new ChunkToProcess(level, cx, cz));
+            int wood = 0, fires = 0;
+            for (BlockPos c : cols)
+                for (int dy = 1; dy <= 40; dy++) {
+                    net.minecraft.world.level.block.state.BlockState st = level.getBlockState(c.above(dy));
+                    if (st.is(net.minecraft.tags.BlockTags.LOGS) || st.is(net.minecraft.tags.BlockTags.LEAVES))
+                        wood++;
+                    if (st.is(Blocks.FIRE))
+                        fires++;
+                }
+            boolean fireOnGround = level.getBlockState(cols[0].above()).is(Blocks.FIRE)
+                    && level.getBlockState(cols[1].above()).is(Blocks.FIRE);
+            String detail = "woodLeft=" + wood + " fires=" + fires + " fireOnGround=" + fireOnGround
+                    + " ground=" + level.getBlockState(cols[0]).getBlock();
+            if (round == 0) {
+                check("trees: a tall trunk burns down in one step, the fire on the ground", wood == 0 && fireOnGround && fires == 2, detail);
+            } else {
+                check("trees: after the end a tall trunk is gone without fire", wood == 0 && fires == 0, detail);
+            }
+            level.setChunkForced(cx, cz, false);
+        }
         defaults();
     }
 

@@ -15,7 +15,8 @@ tools/selftest/runtest.sh <project_dir> <fresh|copy:<world_dir>> <out_name> scen
 Scenarios:
 
 - `generate`: generates the test areas (deep ocean, river, forest, frozen,
-  swamp) and saves the world. Copy `run/world` somewhere and pass it with
+  swamp; `tall_taiga` and `jungle` only when named in `regions=...`) and saves
+  the world. Copy `run/world` somewhere and pass it with
   `copy:<dir>` to every other run: Minecraft world generation is not exactly
   the same from one run to the next, so comparisons need the same files.
 - `compare`: processes the test areas (`day`, or `days=50,60,...` one after
@@ -39,8 +40,9 @@ Scenarios:
   with the real day event, `rapidInterval` ticks apart) and rebuilds the client
   light from the packets it received, compared with the server light. It also
   prints `LIGHT` (columns with less than full sky light above their top block,
-  `SKYBAD` lines for the first ones) and `MOBS` (living mobs around the player
-  by type, and how many of them are in the open).
+  `SKYBAD`/`SKYCOL` lines for the first ones, fires, logs and leaves left near
+  the surface) and `MOBS` (living mobs around the player by type, and how many
+  of them are in the open).
 - `perf`: the `clientlight` run, measured. For each window (`join`: the
   player arrives, `lightTicks` ticks; `phase`: after `phaseChangeDay`;
   `idle`: `idleTicks` more ticks) it prints the server tick times (harness

@@ -11,9 +11,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * From the first step of the apocalypse on, snow and ice melt in the open (see
- * Generator.transformSurface): no new snow settles and no water freezes in the
- * overworld any more, neither while it snows nor in the chunks generated then.
+ * From the start of the apocalypse on, snow and ice melt in the open (see
+ * Generator.meltColumn): no new snow settles and no water freezes in the overworld
+ * any more, neither while it snows nor in the chunks generated then.
  * Injections only, so other mods can change the same methods.
  */
 @Mixin(Biome.class)

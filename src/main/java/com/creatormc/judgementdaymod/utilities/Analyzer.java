@@ -127,7 +127,7 @@ public class Analyzer {
     }
 
     /**
-     * Snow and ice, which melt in the open from the first step of the apocalypse on.
+     * Snow and ice, which melt in the open from the start of the apocalypse on.
      */
     public static boolean isMeltable(BlockState blockState) {
         return blockState.is(Blocks.SNOW)
