@@ -22,6 +22,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.FakePlayerFactory;
@@ -46,6 +47,10 @@ public class SelfTestNew {
         return new int[] { 300, z, 310, z, 320, z, 330, z };
     }
     static final List<UUID[]> cows = new ArrayList<>();
+    // Water pool of each set of cows (the pool cow is exposed once it evaporates)
+    static final List<BlockPos> pools = new ArrayList<>();
+    // Spot under the roof of each set of cows
+    static final List<BlockPos> roofs = new ArrayList<>();
     static int mobRound = 0;
     // round: {unloadDay, reloadDay, expectExposedRemoved}
     static final int[][] ROUNDS = { { 60, 63, 1 }, { 60, 60, 0 }, { 210, 230, 0 }, { 195, 230, 1 } };
@@ -348,6 +353,10 @@ public class SelfTestNew {
             animals(level);
             animalsMore(level);
             reviewFixes(level);
+            heightsAfterJump();
+            snowAndIce(level);
+            meltOnTop(level);
+            noFireAfterEnd(level);
             stage = 1;
             waitUntil = tick + 60;
         } else if (stage == 1 && tick >= waitUntil) {
@@ -387,6 +396,9 @@ public class SelfTestNew {
                 for (int i = 0; i < MOB_CHUNKS.length; i += 2) {
                     level.setChunkForced(MOB_CHUNKS[i], MOB_CHUNKS[i + 1], true);
                     level.getChunk(MOB_CHUNKS[i], MOB_CHUNKS[i + 1]);
+                    // A player arrives: the chunk catches up on the steps it missed
+                    com.creatormc.judgementdaymod.handlers.DayTracker
+                            .enqueueChunk(new ChunkToProcess(level, MOB_CHUNKS[i], MOB_CHUNKS[i + 1]));
                 }
                 stage = 4;
                 waitUntil = tick + 100;
@@ -589,17 +601,25 @@ public class SelfTestNew {
         int cx = 210, cz = 210;
         level.setChunkForced(cx, cz, true);
         level.getChunk(cx, cz);
-        BlockPos pool = new BlockPos((cx << 4) + 8, 100, (cz << 4) + 8);
-        level.setBlock(pool.below(), Blocks.STONE.defaultBlockState(), 2);
-        level.setBlock(pool, Blocks.WATER.defaultBlockState(), 2);
+        // Ten pools: the step itself takes the top block of a column 20% of the time, the
+        // evaporation would take them all
+        BlockPos[] pools = new BlockPos[10];
+        for (int i = 0; i < pools.length; i++) {
+            pools[i] = new BlockPos((cx << 4) + 1 + i, 100, (cz << 4) + 8);
+            level.setBlock(pools[i].below(), Blocks.STONE.defaultBlockState(), 2);
+            level.setBlock(pools[i], Blocks.WATER.defaultBlockState(), 2);
+        }
         ApocalypseChunkData.get(level).setPhase(new ChunkPos(cx, cz), 0);
         ConfigManager.apocalypseCurrentDay = 12;
         ConfigManager.lastApocalypseStep = 1;
         ConfigManager.apocalypseEndDay = 12;
         ConfigManager.apocalypseMaxDays = 11;
         Generator.processChunk(new ChunkToProcess(level, cx, cz));
-        check("ritual at step 1 keeps water", level.getBlockState(pool).is(Blocks.WATER),
-                "state=" + level.getBlockState(pool));
+        int kept = 0;
+        for (BlockPos pool : pools)
+            if (level.getBlockState(pool).is(Blocks.WATER))
+                kept++;
+        check("ritual at step 1 keeps water", kept >= 3, "pools kept=" + kept + "/" + pools.length);
         defaults();
     }
 
@@ -896,8 +916,218 @@ public class SelfTestNew {
     // ---------------------------------------------------------------- mob sweep
 
     /** Four cows per chunk: exposed, underground, in water, under a roof. */
+    // ------------------------------------------------------------------ 1.3.0
+
+    static void heightsAfterJump() {
+        // Day moved forward by hand from 25 (phase 2 applied) to 200: the skipped phases
+        // lower the heights at load as day by day (30 -> 12 -> 4 -> 4)
+        defaults();
+        ConfigManager.apocalypseCurrentDay = 200;
+        ConfigManager.minDamageHeight = 30;
+        ConfigManager.minWaterEvaporationHeight = 30;
+        ConfigManager.lastAppliedPhase = 2;
+        Generator.resetState();
+        check("jump 25 -> 200 lowers the skipped heights", ConfigManager.minDamageHeight == 4
+                && ConfigManager.minWaterEvaporationHeight == 4 && ConfigManager.lastAppliedPhase == 5,
+                "damage=" + ConfigManager.minDamageHeight + " water=" + ConfigManager.minWaterEvaporationHeight
+                        + " phase=" + ConfigManager.lastAppliedPhase);
+
+        // Within the countdown: 25 -> 45
+        defaults();
+        ConfigManager.apocalypseCurrentDay = 45;
+        ConfigManager.minDamageHeight = 30;
+        ConfigManager.minWaterEvaporationHeight = 30;
+        ConfigManager.lastAppliedPhase = 2;
+        Generator.resetState();
+        check("jump 25 -> 45 lowers the skipped heights", ConfigManager.minDamageHeight == 4
+                && ConfigManager.lastAppliedPhase == 4,
+                "damage=" + ConfigManager.minDamageHeight + " phase=" + ConfigManager.lastAppliedPhase);
+
+        // After the ritual (day 30, phase 3 applied) the heights stay as they were then
+        defaults();
+        ConfigManager.apocalypseCurrentDay = 30;
+        ConfigManager.apocalypseMaxDays = 29;
+        ConfigManager.apocalypseEndDay = 30;
+        ConfigManager.minDamageHeight = 12;
+        ConfigManager.minWaterEvaporationHeight = 12;
+        ConfigManager.lastAppliedPhase = 3;
+        ConfigManager.lastApocalypseStep = 3;
+        Generator.resetState();
+        check("ritual keeps its heights at load", ConfigManager.minDamageHeight == 12 && ConfigManager.lastAppliedPhase == 3,
+                "damage=" + ConfigManager.minDamageHeight + " phase=" + ConfigManager.lastAppliedPhase);
+
+        // Normal play: nothing to catch up, phase 0 still entered on day 1
+        defaults();
+        check("fresh world untouched at load", ConfigManager.lastAppliedPhase == -1 && ConfigManager.minDamageHeight == 60,
+                "phase=" + ConfigManager.lastAppliedPhase);
+        ConfigManager.apocalypseCurrentDay = 26;
+        ConfigManager.minDamageHeight = 30;
+        ConfigManager.lastAppliedPhase = 2;
+        Generator.resetState();
+        check("restart on the phase of the day untouched", ConfigManager.minDamageHeight == 30 && ConfigManager.lastAppliedPhase == 2,
+                "damage=" + ConfigManager.minDamageHeight);
+        defaults();
+    }
+
+    /** A cold surface spot: x, z of a snowy biome, loaded. */
+    static BlockPos coldSpot(ServerLevel level, int skip) {
+        com.mojang.datafixers.util.Pair<BlockPos, net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> found = level
+                .findClosestBiome3d(h -> h.is(net.minecraft.world.level.biome.Biomes.SNOWY_PLAINS)
+                        || h.is(net.minecraft.world.level.biome.Biomes.SNOWY_TAIGA)
+                        || h.is(net.minecraft.world.level.biome.Biomes.ICE_SPIKES), new BlockPos(0, 64, 0), 6400, 32, 64);
+        if (found == null)
+            return null;
+        BlockPos p = found.getFirst().offset(skip * 16, 0, 0);
+        level.setChunkForced(p.getX() >> 4, p.getZ() >> 4, true);
+        level.getChunk(p.getX() >> 4, p.getZ() >> 4);
+        return p;
+    }
+
+    static void snowAndIce(ServerLevel level) {
+        BlockPos spot = coldSpot(level, 0);
+        if (spot == null) {
+            check("snow: cold biome found", false, "");
+            return;
+        }
+        int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, spot.getX(), spot.getZ()) + 4;
+        BlockPos snowPos = new BlockPos(spot.getX(), top, spot.getZ());
+        BlockPos waterPos = snowPos.east(2);
+        for (BlockPos p : new BlockPos[] { snowPos, waterPos }) {
+            level.setBlock(p.below(), Blocks.STONE.defaultBlockState(), 2);
+            for (int dy = 0; dy < 6; dy++)
+                level.setBlock(p.above(dy), Blocks.AIR.defaultBlockState(), 2);
+        }
+        level.setBlock(waterPos, Blocks.WATER.defaultBlockState(), 2);
+        net.minecraft.world.level.biome.Biome biome = level.getBiome(snowPos).value();
+        defaults();
+        boolean snowBefore = biome.shouldSnow(level, snowPos);
+        boolean iceBefore = level.getBiome(waterPos).value().shouldFreeze(level, waterPos, false);
+        ConfigManager.apocalypseCurrentDay = 10;
+        boolean snowAfter = biome.shouldSnow(level, snowPos);
+        boolean iceAfter = level.getBiome(waterPos).value().shouldFreeze(level, waterPos, false);
+        check("snow settles and water freezes before the first step", snowBefore && iceBefore,
+                "snow=" + snowBefore + " ice=" + iceBefore + " at " + snowPos.toShortString());
+        check("no new snow or ice from the first step", !snowAfter && !iceAfter, "snow=" + snowAfter + " ice=" + iceAfter);
+        defaults();
+    }
+
+    static void meltOnTop(ServerLevel level) {
+        for (int round = 0; round < 2; round++) {
+            BlockPos spot = coldSpot(level, 1 + round);
+            if (spot == null)
+                return;
+            int cx = spot.getX() >> 4, cz = spot.getZ() >> 4;
+            int bx = cx << 4, bz = cz << 4;
+            int y0 = level.getMaxBuildHeight() - 40;
+            // Snow on grass (a row of them, the steps may turn some grass into ash), ice
+            // over water in a basin, a packed ice pillar: each the top of its column
+            BlockPos snow = new BlockPos(bx + 2, y0, bz + 2);
+            for (int i = 0; i < 8; i++) {
+                BlockPos g = snow.south(i);
+                level.setBlock(g.below(), Blocks.STONE.defaultBlockState(), 2);
+                level.setBlock(g, Blocks.GRASS_BLOCK.defaultBlockState()
+                        .setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.SNOWY, true), 2);
+                level.setBlock(g.above(), Blocks.SNOW.defaultBlockState(), 2);
+            }
+            BlockPos ice = new BlockPos(bx + 8, y0, bz + 8);
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dz = -1; dz <= 1; dz++) {
+                    level.setBlock(ice.offset(dx, 0, dz), Blocks.STONE.defaultBlockState(), 2);
+                    if (dx != 0 || dz != 0)
+                        level.setBlock(ice.offset(dx, 1, dz), Blocks.STONE.defaultBlockState(), 2);
+                }
+            level.setBlock(ice.above(), Blocks.WATER.defaultBlockState(), 2);
+            level.setBlock(ice.above(2), Blocks.ICE.defaultBlockState(), 2);
+            BlockPos pillar = new BlockPos(bx + 13, y0, bz + 13);
+            level.setBlock(pillar, Blocks.STONE.defaultBlockState(), 2);
+            for (int dy = 1; dy <= 3; dy++)
+                level.setBlock(pillar.above(dy), Blocks.PACKED_ICE.defaultBlockState(), 2);
+
+            defaults();
+            ApocalypseChunkData.get(level).setPhase(new ChunkPos(cx, cz), -1);
+            // round 0: day 5 (step 0, nothing melts), round 1: day 10 (step 1)
+            ConfigManager.apocalypseCurrentDay = round == 0 ? 5 : 10;
+            Generator.resetState();
+            Generator.processChunk(new ChunkToProcess(level, cx, cz));
+
+            boolean snowGone = true, groundClear = true;
+            int grassLeft = 0, snowLeft = 0;
+            for (int i = 0; i < 8; i++) {
+                if (level.getBlockState(snow.south(i).above()).is(Blocks.SNOW)) {
+                    snowGone = false;
+                    snowLeft++;
+                }
+                net.minecraft.world.level.block.state.BlockState g = level.getBlockState(snow.south(i));
+                if (g.is(Blocks.GRASS_BLOCK))
+                    grassLeft++;
+                if (g.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.SNOWY)
+                        && g.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.SNOWY))
+                    groundClear = false;
+            }
+            net.minecraft.world.level.block.state.BlockState ground = level.getBlockState(snow);
+            net.minecraft.world.level.block.state.BlockState iceTop = level.getBlockState(ice.above(2));
+            boolean iceMelted = !iceTop.is(Blocks.ICE);
+            boolean iceToWater = iceTop.is(Blocks.WATER) || iceTop.isAir();
+            int packed = 0;
+            for (int dy = 1; dy <= 3; dy++)
+                if (level.getBlockState(pillar.above(dy)).is(Blocks.PACKED_ICE))
+                    packed++;
+            String detail = "snowLeft=" + snowLeft + " ground=" + ground + " grassLeft=" + grassLeft + " iceTop=" + iceTop
+                    + " packedLeft=" + packed;
+            if (round == 0) {
+                // Only the step itself (5% on day 5) may take the top block of a column
+                check("melt: nothing melts before the first step", snowLeft >= 5 && packed >= 2, detail);
+            } else {
+                check("melt: snow, ice and packed ice on top melt at the first step",
+                        snowGone && groundClear && grassLeft > 0 && iceMelted && iceToWater && packed == 0, detail);
+            }
+            level.setChunkForced(cx, cz, false);
+        }
+        defaults();
+    }
+
+    static int countFire(LevelChunk chunk) {
+        int fires = 0;
+        for (net.minecraft.world.level.chunk.LevelChunkSection section : chunk.getSections())
+            if (section != null && !section.hasOnlyAir() && section.maybeHas(st -> st.is(Blocks.FIRE)))
+                for (int x = 0; x < 16; x++)
+                    for (int y = 0; y < 16; y++)
+                        for (int z = 0; z < 16; z++)
+                            if (section.getBlockState(x, y, z).is(Blocks.FIRE))
+                                fires++;
+        return fires;
+    }
+
+    static void noFireAfterEnd(ServerLevel level) {
+        com.mojang.datafixers.util.Pair<BlockPos, net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> found = level
+                .findClosestBiome3d(h -> h.is(net.minecraft.tags.BiomeTags.IS_FOREST), new BlockPos(0, 64, 0), 6400, 32, 64);
+        if (found == null) {
+            check("fire: forest found", false, "");
+            return;
+        }
+        int[] fires = new int[2];
+        for (int round = 0; round < 2; round++) {
+            int cx = (found.getFirst().getX() >> 4) + round * 3, cz = found.getFirst().getZ() >> 4;
+            level.setChunkForced(cx, cz, true);
+            LevelChunk chunk = level.getChunk(cx, cz);
+            defaults();
+            ApocalypseChunkData.get(level).setPhase(new ChunkPos(cx, cz), 2);
+            // round 0: day 30, before the end; round 1: day 200, after it
+            ConfigManager.apocalypseCurrentDay = round == 0 ? 30 : 200;
+            Generator.resetState();
+            Generator.processChunk(new ChunkToProcess(level, cx, cz));
+            fires[round] = countFire(chunk);
+            level.setChunkForced(cx, cz, false);
+        }
+        check("fire: a forest catches fire before the end", fires[0] > 0, "fires=" + fires[0]);
+        check("fire: no fire when catching up after the end", fires[1] == 0, "fires=" + fires[1]);
+        defaults();
+    }
+
     static void setupMobs(ServerLevel level) {
         cows.clear();
+        pools.clear();
+        roofs.clear();
         for (int i = 0; i < MOB_CHUNKS.length; i += 2) {
             int cx = MOB_CHUNKS[i], cz = MOB_CHUNKS[i + 1];
             level.setChunkForced(cx, cz, true);
@@ -927,12 +1157,14 @@ public class SelfTestNew {
             level.setBlock(pool, Blocks.WATER.defaultBlockState(), 2);
             level.setBlock(pool.above(), Blocks.WATER.defaultBlockState(), 2);
             ids[2] = spawnCow(level, pool);
+            pools.add(pool);
             // roof
             BlockPos roofed = new BlockPos(bx + 5, top, bz + 5);
             for (int dx = -1; dx <= 1; dx++)
                 for (int dz = -1; dz <= 1; dz++)
                     level.setBlock(roofed.offset(dx, 3, dz), Blocks.STONE.defaultBlockState(), 2);
             ids[3] = spawnCow(level, roofed);
+            roofs.add(roofed);
             cows.add(ids);
         }
     }
@@ -948,18 +1180,35 @@ public class SelfTestNew {
 
     static void verifyMobs(ServerLevel level) {
         boolean removeExpected = ROUNDS[mobRound][2] == 1;
-        int exposedAlive = 0, safeAlive = 0;
-        for (UUID[] ids : cows) {
+        int exposedAlive = 0, safeAlive = 0, safeExpected = 0, dryPools = 0;
+        for (int c = 0; c < cows.size(); c++) {
+            UUID[] ids = cows.get(c);
             if (level.getEntity(ids[0]) != null)
                 exposedAlive++;
+            // The pool cow is in the open once its chunk caught up and the pool evaporated:
+            // judged again then (1.3.0)
+            boolean dry = !level.getBlockState(pools.get(c)).is(Blocks.WATER);
+            if (dry)
+                dryPools++;
+            // The roof turns into ash when its chunk catches up, which falls: in the open then
+            BlockPos roof = roofs.get(c);
+            boolean roofGone = level.getBlockState(roof.above(3)).isAir() && level.getBlockState(roof.above(2)).isAir()
+                    && level.getBlockState(roof.above()).isAir();
+            safeExpected += 3 - (removeExpected && dry ? 1 : 0) - (removeExpected && roofGone ? 1 : 0);
             for (int i = 1; i < 4; i++)
                 if (level.getEntity(ids[i]) != null)
                     safeAlive++;
+            SelfTestCommon.log("DEBUG set " + c + " alive=" + (level.getEntity(ids[0]) != null) + "," + (level.getEntity(ids[1]) != null)
+                    + "," + (level.getEntity(ids[2]) != null) + "," + (level.getEntity(ids[3]) != null) + " poolDry=" + dry
+                    + " roofGone=" + roofGone + " roof=" + level.getBlockState(roof.above(3)).getBlock() + "/"
+                    + level.getBlockState(roof.above(2)).getBlock() + "/" + level.getBlockState(roof.above()).getBlock()
+                    + "/" + level.getBlockState(roof).getBlock());
         }
         String detail = "unload day " + ROUNDS[mobRound][0] + " reload day " + ROUNDS[mobRound][1]
-                + " exposedAlive=" + exposedAlive + "/" + cows.size() + " shelteredAlive=" + safeAlive + "/" + (cows.size() * 3);
+                + " exposedAlive=" + exposedAlive + "/" + cows.size() + " shelteredAlive=" + safeAlive + "/" + safeExpected
+                + " dryPools=" + dryPools;
         check("mobs round " + mobRound + (removeExpected ? " exposed removed" : " nobody removed"),
-                (removeExpected ? exposedAlive == 0 : exposedAlive == cows.size()) && safeAlive == cows.size() * 3, detail);
+                (removeExpected ? exposedAlive == 0 : exposedAlive == cows.size()) && safeAlive == safeExpected, detail);
         // clean up the survivors before the next round
         for (UUID[] ids : cows)
             for (UUID id : ids) {

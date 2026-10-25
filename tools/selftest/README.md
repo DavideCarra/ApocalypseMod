@@ -35,8 +35,12 @@ Scenarios:
   batches (`Generator.beginBatch`), as `DayTracker` does.
 - `clientlight`: logs in a fake player with a recording connection, lets the
   mod process the chunks it sees (`phaseChangeDay` simulates a phase change
-  afterwards) and rebuilds the client light from the packets it received,
-  compared with the server light.
+  afterwards, `rapidDays=1,2,3` goes through those days one after the other
+  with the real day event, `rapidInterval` ticks apart) and rebuilds the client
+  light from the packets it received, compared with the server light. It also
+  prints `LIGHT` (columns with less than full sky light above their top block,
+  `SKYBAD` lines for the first ones) and `MOBS` (living mobs around the player
+  by type, and how many of them are in the open).
 - `perf`: the `clientlight` run, measured. For each window (`join`: the
   player arrives, `lightTicks` ticks; `phase`: after `phaseChangeDay`;
   `idle`: `idleTicks` more ticks) it prints the server tick times (harness
@@ -53,10 +57,16 @@ Scenarios:
   the apocalypse state on login, the new day, the phase title and music on a
   phase change; the days go on with nobody online. Prints `RESULT fails=N`.
 - `logic`: checks of the new behaviour (steps, restart, ritual, old configs,
-  light sync, animal spawning, breeding, mobs left in unattended areas).
+  light sync, animal spawning, breeding, mobs left in unattended areas, heights
+  after days skipped by hand, snow and ice melting, no fire after the end).
   Prints PASS/FAIL lines and `RESULT fails=N`.
 
 Every run ends with `FALLING joined=N`, the falling block entities created.
+
+`ClientProbe.java` is for the dev client (`gradlew runClient`, copy it into the
+same `selftest` folder): while `run/probe.flag` exists it logs every 5 seconds a
+`[PROBE]` line with the columns around the player that have less than full sky
+light above their top block, as the client sees them.
 
 Use `PORT=<port>` to run several servers at once (results that depend on the
 first ticks after loading can then vary under load; repeat the run).

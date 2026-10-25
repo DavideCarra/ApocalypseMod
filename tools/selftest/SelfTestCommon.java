@@ -318,6 +318,8 @@ public class SelfTestCommon {
     static final java.util.Map<Long, Integer> lastLightTick = new java.util.HashMap<>();
     static final java.util.Map<Long, Integer> lastBlockTick = new java.util.HashMap<>();
     static int packetsChunk, packetsLight, packetsForget, packetsBlocks;
+    static String[] rapidDays;
+    static int rapidIndex;
 
     static void clientLightTick() throws Exception {
         ServerLevel level = server.getLevel(Level.OVERWORLD);
@@ -362,12 +364,39 @@ public class SelfTestCommon {
                     log("PHASE CHANGE day=" + change);
                     stage = 2;
                     waitUntil = tick + Integer.parseInt(props.getProperty("lightTicks", "600"));
+                } else if (props.getProperty("rapidDays") != null) {
+                    // New days one after the other through the real day event (phases,
+                    // heights, every chunk around the players again), as a player
+                    // skipping days in a row does
+                    endWindow();
+                    startWindow("phase");
+                    rapidDays = props.getProperty("rapidDays").split(",");
+                    rapidIndex = 0;
+                    stage = 5;
+                    waitUntil = tick;
                 } else {
                     endWindow();
                     long h0 = System.nanoTime();
                     compareClientLight(level);
+                    lightReport(level);
+                    mobReport(level);
                     harnessNanos += System.nanoTime() - h0;
                     finish();
+                }
+            }
+        } else if (stage == 5) {
+            drainPackets();
+            if (tick >= waitUntil) {
+                ConfigManager.apocalypseCurrentDay = Integer.parseInt(rapidDays[rapidIndex].trim());
+                Generator.handleDayEvent();
+                log("DAY " + ConfigManager.apocalypseCurrentDay + " water=" + ConfigManager.minWaterEvaporationHeight
+                        + " damage=" + ConfigManager.minDamageHeight);
+                rapidIndex++;
+                if (rapidIndex >= rapidDays.length) {
+                    stage = 2;
+                    waitUntil = tick + Integer.parseInt(props.getProperty("lightTicks", "600"));
+                } else {
+                    waitUntil = tick + Integer.parseInt(props.getProperty("rapidInterval", "20"));
                 }
             }
         } else if (stage == 2) {
@@ -377,6 +406,7 @@ public class SelfTestCommon {
                 long h0 = System.nanoTime();
                 compareClientLight(level);
                 lightReport(level);
+                mobReport(level);
                 harnessNanos += System.nanoTime() - h0;
                 int idle = Integer.parseInt(props.getProperty("idleTicks", "0"));
                 if (idle > 0) {
@@ -652,6 +682,8 @@ public class SelfTestCommon {
         ConfigManager.minDamageHeight = Integer.parseInt(props.getProperty("damageHeight", "60"));
         ConfigManager.minWaterEvaporationHeight = Integer.parseInt(props.getProperty("waterHeight", "60"));
         ConfigManager.apocalypseCurrentDay = Integer.parseInt(props.getProperty("day", "50"));
+        // The heights are the ones given: as for an old config, no phase is caught up at load
+        ConfigManager.lastAppliedPhase = ConfigManager.UNSET;
         Generator.resetState();
     }
 
@@ -823,8 +855,22 @@ public class SelfTestCommon {
                             int top = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, lx, lz) + 1;
                             if (top < level.getMaxBuildHeight()) {
                                 columns++;
-                                if (level.getBrightness(LightLayer.SKY, new BlockPos(wx, top, wz)) < 15)
+                                int sky = level.getBrightness(LightLayer.SKY, new BlockPos(wx, top, wz));
+                                if (sky < 15) {
                                     skyBad++;
+                                    badPerChunk.merge(x + ":" + z, 1, Integer::sum);
+                                    if (skyBad <= 8) {
+                                        // Where the light stops: the chunk's sky sources and the
+                                        // light a few blocks up
+                                        StringBuilder up = new StringBuilder();
+                                        for (int dy = 0; dy <= 48; dy += 8)
+                                            up.append(' ').append(top + dy).append('=')
+                                                    .append(level.getBrightness(LightLayer.SKY, new BlockPos(wx, top + dy, wz)));
+                                        log("SKYBAD " + wx + " " + top + " " + wz + " sky=" + sky + " lowestSource="
+                                                + chunk.getSkyLightSources().getLowestSourceY(lx, lz) + " top="
+                                                + chunk.getBlockState(new BlockPos(wx, top - 1, wz)) + " up:" + up);
+                                    }
+                                }
                             }
                             for (int y = top - 1; y > top - 40; y--) {
                                 BlockPos p = new BlockPos(wx, y, wz);
@@ -839,7 +885,29 @@ public class SelfTestCommon {
                 }
             }
         }
-        log("LIGHT columns=" + columns + " skyBelow15=" + skyBad + " fires=" + fires + " firesLit=" + firesLit);
+        log("LIGHT columns=" + columns + " skyBelow15=" + skyBad + " fires=" + fires + " firesLit=" + firesLit
+                + " badChunks=" + badPerChunk);
+    }
+
+    static final java.util.Map<String, Integer> badPerChunk = new java.util.TreeMap<>();
+
+    /** Living mobs around the player, by type; "exposed" ones see the sky out of water. */
+    static void mobReport(ServerLevel level) {
+        java.util.Map<String, int[]> counts = new java.util.TreeMap<>();
+        BlockPos c = fakePlayer.blockPosition();
+        AABB box = new AABB(c.getX() - 48, level.getMinBuildHeight(), c.getZ() - 48, c.getX() + 48,
+                level.getMaxBuildHeight(), c.getZ() + 48);
+        for (net.minecraft.world.entity.Mob mob : level.getEntitiesOfClass(net.minecraft.world.entity.Mob.class, box)) {
+            if (!mob.isAlive())
+                continue;
+            int[] n = counts.computeIfAbsent(EntityType.getKey(mob.getType()).getPath(), k -> new int[2]);
+            n[0]++;
+            if (!mob.isInWater() && level.canSeeSky(mob.blockPosition()))
+                n[1]++;
+        }
+        StringBuilder sb = new StringBuilder();
+        counts.forEach((k, v) -> sb.append(' ').append(k).append('=').append(v[0]).append("/exposed").append(v[1]));
+        log("MOBS" + sb);
     }
 
     // ---------------------------------------------------------------- utils
