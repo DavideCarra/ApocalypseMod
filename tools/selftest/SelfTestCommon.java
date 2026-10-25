@@ -318,6 +318,8 @@ public class SelfTestCommon {
     static final java.util.Map<Long, Integer> lastLightTick = new java.util.HashMap<>();
     static final java.util.Map<Long, Integer> lastBlockTick = new java.util.HashMap<>();
     static int packetsChunk, packetsLight, packetsForget, packetsBlocks;
+    static String[] rapidDays;
+    static int rapidIndex;
 
     static void clientLightTick() throws Exception {
         ServerLevel level = server.getLevel(Level.OVERWORLD);
@@ -362,12 +364,39 @@ public class SelfTestCommon {
                     log("PHASE CHANGE day=" + change);
                     stage = 2;
                     waitUntil = tick + Integer.parseInt(props.getProperty("lightTicks", "600"));
+                } else if (props.getProperty("rapidDays") != null) {
+                    // New days one after the other through the real day event (phases,
+                    // heights, every chunk around the players again), as a player
+                    // skipping days in a row does
+                    endWindow();
+                    startWindow("phase");
+                    rapidDays = props.getProperty("rapidDays").split(",");
+                    rapidIndex = 0;
+                    stage = 5;
+                    waitUntil = tick;
                 } else {
                     endWindow();
                     long h0 = System.nanoTime();
                     compareClientLight(level);
+                    lightReport(level);
+                    mobReport(level);
                     harnessNanos += System.nanoTime() - h0;
                     finish();
+                }
+            }
+        } else if (stage == 5) {
+            drainPackets();
+            if (tick >= waitUntil) {
+                ConfigManager.apocalypseCurrentDay = Integer.parseInt(rapidDays[rapidIndex].trim());
+                Generator.handleDayEvent();
+                log("DAY " + ConfigManager.apocalypseCurrentDay + " water=" + ConfigManager.minWaterEvaporationHeight
+                        + " damage=" + ConfigManager.minDamageHeight);
+                rapidIndex++;
+                if (rapidIndex >= rapidDays.length) {
+                    stage = 2;
+                    waitUntil = tick + Integer.parseInt(props.getProperty("lightTicks", "600"));
+                } else {
+                    waitUntil = tick + Integer.parseInt(props.getProperty("rapidInterval", "20"));
                 }
             }
         } else if (stage == 2) {
@@ -377,6 +406,7 @@ public class SelfTestCommon {
                 long h0 = System.nanoTime();
                 compareClientLight(level);
                 lightReport(level);
+                mobReport(level);
                 harnessNanos += System.nanoTime() - h0;
                 int idle = Integer.parseInt(props.getProperty("idleTicks", "0"));
                 if (idle > 0) {
@@ -652,6 +682,8 @@ public class SelfTestCommon {
         ConfigManager.minDamageHeight = Integer.parseInt(props.getProperty("damageHeight", "60"));
         ConfigManager.minWaterEvaporationHeight = Integer.parseInt(props.getProperty("waterHeight", "60"));
         ConfigManager.apocalypseCurrentDay = Integer.parseInt(props.getProperty("day", "50"));
+        // The heights are the ones given: as for an old config, no phase is caught up at load
+        ConfigManager.lastAppliedPhase = ConfigManager.UNSET;
         Generator.resetState();
     }
 
@@ -671,11 +703,20 @@ public class SelfTestCommon {
         preds.add(h -> h.is(BiomeTags.IS_BEACH));
         names.add("swamp");
         preds.add(h -> h.is(Biomes.SWAMP) || h.is(Biomes.MANGROVE_SWAMP));
+        // Only when asked by name (regions=...): not part of the default set
+        names.add("tall_taiga");
+        preds.add(h -> h.is(Biomes.OLD_GROWTH_SPRUCE_TAIGA) || h.is(Biomes.OLD_GROWTH_PINE_TAIGA));
+        names.add("jungle");
+        preds.add(h -> h.is(BiomeTags.IS_JUNGLE));
+        names.add("mushroom");
+        preds.add(h -> h.is(Biomes.MUSHROOM_FIELDS) || h.is(Biomes.DARK_FOREST));
 
         String only = props.getProperty("regions");
         BlockPos origin = new BlockPos(0, 64, 0);
         for (int i = 0; i < preds.size(); i++) {
             if (only != null && !("," + only + ",").contains("," + names.get(i) + ","))
+                continue;
+            if (only == null && i >= 6)
                 continue;
             Pair<BlockPos, Holder<Biome>> found = level.findClosestBiome3d(preds.get(i), origin, 6400, 32, 64);
             if (found == null) {
@@ -812,7 +853,7 @@ public class SelfTestCommon {
     }
 
     static void lightReport(ServerLevel level) {
-        int fires = 0, firesLit = 0, columns = 0, skyBad = 0;
+        int fires = 0, firesLit = 0, columns = 0, skyBad = 0, logs = 0, leaves = 0, mushroom = 0;
         for (int[] r : regions) {
             for (int x = r[0] - 2; x <= r[0] + 2; x++) {
                 for (int z = r[1] - 2; z <= r[1] + 2; z++) {
@@ -823,12 +864,44 @@ public class SelfTestCommon {
                             int top = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, lx, lz) + 1;
                             if (top < level.getMaxBuildHeight()) {
                                 columns++;
-                                if (level.getBrightness(LightLayer.SKY, new BlockPos(wx, top, wz)) < 15)
+                                int sky = level.getBrightness(LightLayer.SKY, new BlockPos(wx, top, wz));
+                                if (sky < 15) {
                                     skyBad++;
+                                    badPerChunk.merge(x + ":" + z, 1, Integer::sum);
+                                    if (skyBad <= 8) {
+                                        // Where the light stops: the chunk's sky sources and the
+                                        // light a few blocks up
+                                        StringBuilder up = new StringBuilder();
+                                        for (int dy = 0; dy <= 48; dy += 8)
+                                            up.append(' ').append(top + dy).append('=')
+                                                    .append(level.getBrightness(LightLayer.SKY, new BlockPos(wx, top + dy, wz)));
+                                        log("SKYBAD " + wx + " " + top + " " + wz + " sky=" + sky + " lowestSource="
+                                                + chunk.getSkyLightSources().getLowestSourceY(lx, lz) + " top="
+                                                + chunk.getBlockState(new BlockPos(wx, top - 1, wz)) + " up:" + up);
+                                        if (skyBad <= 3) {
+                                            // What the column and its sides hold above the top
+                                            StringBuilder col = new StringBuilder();
+                                            for (int y = top - 2; y < top + 30; y++) {
+                                                BlockState c = chunk.getBlockState(new BlockPos(wx, y, wz));
+                                                if (!c.isAir())
+                                                    col.append(' ').append(y).append('=').append(c.getBlock().getDescriptionId()
+                                                            .replace("block.minecraft.", "").replace("block.judgementday.", ""));
+                                            }
+                                            log("SKYCOL " + wx + " " + wz + col);
+                                        }
+                                    }
+                                }
                             }
                             for (int y = top - 1; y > top - 40; y--) {
                                 BlockPos p = new BlockPos(wx, y, wz);
                                 BlockState st = chunk.getBlockState(p);
+                                if (st.is(Blocks.RED_MUSHROOM_BLOCK) || st.is(Blocks.BROWN_MUSHROOM_BLOCK)
+                                        || st.is(Blocks.MUSHROOM_STEM))
+                                    mushroom++;
+                                if (st.is(net.minecraft.tags.BlockTags.LOGS))
+                                    logs++;
+                                else if (st.is(net.minecraft.tags.BlockTags.LEAVES))
+                                    leaves++;
                                 if (st.is(Blocks.FIRE)) {
                                     fires++;
                                     if (level.getBrightness(LightLayer.BLOCK, p) >= 15)
@@ -839,7 +912,29 @@ public class SelfTestCommon {
                 }
             }
         }
-        log("LIGHT columns=" + columns + " skyBelow15=" + skyBad + " fires=" + fires + " firesLit=" + firesLit);
+        log("LIGHT columns=" + columns + " skyBelow15=" + skyBad + " fires=" + fires + " firesLit=" + firesLit
+                + " logs=" + logs + " leaves=" + leaves + " mushroom=" + mushroom + " badChunks=" + badPerChunk);
+    }
+
+    static final java.util.Map<String, Integer> badPerChunk = new java.util.TreeMap<>();
+
+    /** Living mobs around the player, by type; "exposed" ones see the sky out of water. */
+    static void mobReport(ServerLevel level) {
+        java.util.Map<String, int[]> counts = new java.util.TreeMap<>();
+        BlockPos c = fakePlayer.blockPosition();
+        AABB box = new AABB(c.getX() - 48, level.getMinBuildHeight(), c.getZ() - 48, c.getX() + 48,
+                level.getMaxBuildHeight(), c.getZ() + 48);
+        for (net.minecraft.world.entity.Mob mob : level.getEntitiesOfClass(net.minecraft.world.entity.Mob.class, box)) {
+            if (!mob.isAlive())
+                continue;
+            int[] n = counts.computeIfAbsent(EntityType.getKey(mob.getType()).getPath(), k -> new int[2]);
+            n[0]++;
+            if (!mob.isInWater() && level.canSeeSky(mob.blockPosition()))
+                n[1]++;
+        }
+        StringBuilder sb = new StringBuilder();
+        counts.forEach((k, v) -> sb.append(' ').append(k).append('=').append(v[0]).append("/exposed").append(v[1]));
+        log("MOBS" + sb);
     }
 
     // ---------------------------------------------------------------- utils

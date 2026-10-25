@@ -5,6 +5,7 @@ import java.util.BitSet;
 import java.util.List;
 
 import com.creatormc.judgementdaymod.handlers.DayTracker;
+import com.creatormc.judgementdaymod.handlers.UnattendedChunkHandler;
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
@@ -153,6 +154,14 @@ public final class ChunkLightSync {
     }
 
     /**
+     * Light checks queued around the chunk are still being computed.
+     */
+    public static boolean lightPending(ServerLevel level, long chunk) {
+        final Pending p = pending.get(chunk);
+        return p != null && p.markers > 0 && p.level == level;
+    }
+
+    /**
      * The light checks queued before the markers of these chunks are computed.
      */
     static void markersDone(ServerLevel level, long[] chunks) {
@@ -238,6 +247,7 @@ public final class ChunkLightSync {
                         lit.add(key);
                     else
                         pending.remove(key);
+                    UnattendedChunkHandler.lightDone(level, key);
                 }
             }
         }
@@ -390,6 +400,7 @@ public final class ChunkLightSync {
             if (p.resend)
                 resend(p, key);
             it.remove();
+            UnattendedChunkHandler.lightDone(p.level, key);
         }
     }
 

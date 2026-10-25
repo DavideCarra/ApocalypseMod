@@ -1,9 +1,15 @@
 package com.creatormc.judgementdaymod.handlers;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.creatormc.judgementdaymod.setup.JudgementDayMod;
 import com.creatormc.judgementdaymod.utilities.ApocalypseChunkData;
+import com.creatormc.judgementdaymod.utilities.ChunkLightSync;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
+
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -20,6 +26,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraftforge.common.ForgeHooks;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
+import net.minecraftforge.event.level.ChunkEvent;
 import net.minecraftforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -36,12 +43,20 @@ import net.minecraftforge.fml.common.Mod;
  * it was exposed (sky above it, above the damage height, not in water, not immune
  * to fire, not protected by another mod): it burned while nobody was looking. Mobs
  * sheltered underground, under a roof or in water survive.
+ *
+ * A mob usually comes back before its chunk catches up on the steps it missed: one
+ * that survives then (e.g. under water that is about to evaporate, or under trees
+ * about to burn) is judged again once the chunk has caught up and its light is computed.
  */
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class UnattendedChunkHandler {
 
     // Last day the mob was in the loaded world (in its Forge persistent data)
     private static final String LAST_SEEN_DAY = "judgementday_lastSeenDay";
+
+    // Unattended mobs that survived their loading in a chunk still catching up, by chunk.
+    // Main server thread only
+    private static final Long2ObjectOpenHashMap<List<Mob>> waiting = new Long2ObjectOpenHashMap<>();
 
     /**
      * A mob left behind with its chunk: remember the day. When a chunk stops being
@@ -78,6 +93,7 @@ public class UnattendedChunkHandler {
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
         stampLoadedMobs(event.getServer().getLevel(Level.OVERWORLD));
+        waiting.clear();
     }
 
     /**
@@ -124,10 +140,72 @@ public class UnattendedChunkHandler {
                     && savedStep < Math.min(5, Generator.currentStep());
         }
 
-        if (unattended && burnedInTheOpen(level, mob)) {
+        if (!unattended)
+            return;
+        if (burnedInTheOpen(level, mob)) {
             event.setCanceled(true);
             ApocalypseDamageHandler.forget(mob.getUUID());
+            return;
         }
+        final long chunk = ChunkPos.asLong(SectionPos.blockToSectionCoord(mob.getBlockX()),
+                SectionPos.blockToSectionCoord(mob.getBlockZ()));
+        if (!caughtUp(level, chunk) || ChunkLightSync.lightPending(level, chunk)) {
+            waiting.computeIfAbsent(chunk, k -> new ArrayList<>()).add(mob);
+        }
+    }
+
+    /**
+     * The chunk has just caught up on the steps it missed.
+     */
+    public static void chunkCaughtUp(ServerLevel level, long chunk) {
+        if (!waiting.isEmpty()) {
+            judgeAgain(level, chunk);
+        }
+    }
+
+    /**
+     * The light checks queued around the chunk are computed.
+     */
+    public static void lightDone(ServerLevel level, long chunk) {
+        if (!waiting.isEmpty()) {
+            judgeAgain(level, chunk);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onChunkUnload(ChunkEvent.Unload event) {
+        // Its mobs leave with it, stamped with today: judged again when they come back
+        if (!waiting.isEmpty() && event.getLevel() instanceof ServerLevel) {
+            waiting.remove(event.getChunk().getPos().toLong());
+        }
+    }
+
+    /**
+     * The mobs that survived their loading in the chunk are judged again once it has
+     * caught up and its light is computed: a burned one is removed, as if it had not
+     * been loaded back.
+     */
+    private static void judgeAgain(ServerLevel level, long chunk) {
+        final List<Mob> mobs = waiting.get(chunk);
+        if (mobs == null || !caughtUp(level, chunk) || ChunkLightSync.lightPending(level, chunk))
+            return;
+        waiting.remove(chunk);
+        for (Mob mob : mobs) {
+            if (mob.isRemoved() || mob.level() != level || mob.isPassenger() || mob.isVehicle())
+                continue;
+            if (burnedInTheOpen(level, mob)) {
+                ApocalypseDamageHandler.forget(mob.getUUID());
+                mob.discard();
+            }
+        }
+    }
+
+    /**
+     * The chunk has had every step the world has reached (it is not processed again).
+     */
+    private static boolean caughtUp(ServerLevel level, long chunk) {
+        final int savedStep = ApocalypseChunkData.get(level).getPhase(new ChunkPos(chunk));
+        return savedStep == Generator.PHASE_DONE || savedStep >= Generator.currentStep();
     }
 
     private static boolean burnedInTheOpen(ServerLevel level, Mob mob) {

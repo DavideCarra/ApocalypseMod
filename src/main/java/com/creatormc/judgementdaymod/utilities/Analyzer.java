@@ -127,6 +127,29 @@ public class Analyzer {
     }
 
     /**
+     * Snow and ice, which melt in the open from the start of the apocalypse on.
+     */
+    public static boolean isMeltable(BlockState blockState) {
+        return blockState.is(Blocks.SNOW)
+                || blockState.is(Blocks.SNOW_BLOCK)
+                || blockState.is(Blocks.POWDER_SNOW)
+                || blockState.is(Blocks.ICE)
+                || blockState.is(Blocks.FROSTED_ICE)
+                || blockState.is(Blocks.PACKED_ICE)
+                || blockState.is(Blocks.BLUE_ICE);
+    }
+
+    /**
+     * The ice among them, which melts into water where it touches water.
+     */
+    public static boolean isIce(BlockState blockState) {
+        return blockState.is(Blocks.ICE)
+                || blockState.is(Blocks.FROSTED_ICE)
+                || blockState.is(Blocks.PACKED_ICE)
+                || blockState.is(Blocks.BLUE_ICE);
+    }
+
+    /**
      * Optimized inline version
      */
     public static boolean isMeldable(BlockState blockState, int apocalypseStage) {

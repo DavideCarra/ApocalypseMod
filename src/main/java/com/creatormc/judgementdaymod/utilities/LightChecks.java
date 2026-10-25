@@ -23,7 +23,8 @@ import net.minecraft.world.level.lighting.LightEngine;
  * batch (see begin/end), followed by a single marker task (see ChunkLightSync).
  * The task does exactly what the vanilla per block tasks do (the engines only
  * collect the positions to check, then compute them all in their next update), so
- * the computed light is the same.
+ * the computed light is the same. If another mod replaced the vanilla engines (they
+ * are empty then), the positions go through the level's own checkBlock instead.
  *
  * Members of the light engine are opened by the access transformer
  * (META-INF/accesstransformer.cfg). Main server thread only.
@@ -148,7 +149,17 @@ public final class LightChecks {
 
         if (!unavailable) {
             try {
-                if (bothList.length > 0 || skyList.length > 0) {
+                if (engine.blockEngine == null && engine.skyEngine == null) {
+                    // Another mod replaced the light engines (e.g. Starlight leaves both empty):
+                    // the checks go through the level's own entry point, which it handles, still
+                    // ahead of the markers. Its engine checks both layers of every position
+                    for (long p : bothList) {
+                        engine.checkBlock(BlockPos.of(p));
+                    }
+                    for (long p : skyList) {
+                        engine.checkBlock(BlockPos.of(p));
+                    }
+                } else if (bothList.length > 0 || skyList.length > 0) {
                     engine.addTask(x, z, ThreadedLevelLightEngine.TaskType.PRE_UPDATE, () -> {
                         // Same as LevelLightEngine.checkBlock for every position
                         final LightEngine<?, ?> blockEngine = engine.blockEngine;
