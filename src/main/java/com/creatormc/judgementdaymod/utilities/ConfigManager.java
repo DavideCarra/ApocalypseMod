@@ -26,6 +26,8 @@ public class ConfigManager {
     // HUD the players may show (each player can still hide them, see ClientConfig)
     public static boolean showDayCounter = true;
     public static boolean showHeatBar = true;
+    // The days stay put while nobody is online on the server
+    public static boolean pauseWhenEmpty = true;
 
     // Marks a value missing from the file (configs written by older versions)
     public static final int UNSET = Integer.MIN_VALUE;
@@ -117,6 +119,7 @@ public class ConfigManager {
         startDelayDays = 0;
         showDayCounter = true;
         showHeatBar = true;
+        pauseWhenEmpty = true;
         lastAppliedPhase = UNSET;
         lastApocalypseStep = UNSET;
         stepOriginDay = UNSET;
@@ -145,6 +148,7 @@ public class ConfigManager {
         startDelayDays = Math.max(0, parseInt(props, "startDelayDays", startDelayDays));
         showDayCounter = parseBoolean(props, "showDayCounter", showDayCounter);
         showHeatBar = parseBoolean(props, "showHeatBar", showHeatBar);
+        pauseWhenEmpty = parseBoolean(props, "pauseWhenEmpty", pauseWhenEmpty);
         if (!state)
             return;
 
@@ -210,6 +214,7 @@ public class ConfigManager {
         props.setProperty("startDelayDays", String.valueOf(startDelayDays));
         props.setProperty("showDayCounter", String.valueOf(showDayCounter));
         props.setProperty("showHeatBar", String.valueOf(showHeatBar));
+        props.setProperty("pauseWhenEmpty", String.valueOf(pauseWhenEmpty));
         if (lastAppliedPhase != UNSET) {
             props.setProperty("lastAppliedPhase", String.valueOf(lastAppliedPhase));
         }
@@ -233,6 +238,7 @@ public class ConfigManager {
         props.setProperty("startDelayDays", "0");
         props.setProperty("showDayCounter", "true");
         props.setProperty("showHeatBar", "true");
+        props.setProperty("pauseWhenEmpty", "true");
         store(path, props, "JudgementDayMod settings for new worlds (each world has its own config in <world>/serverconfig)");
     }
 

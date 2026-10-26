@@ -90,8 +90,7 @@ public class DayTracker {
             Analyzer.clearCache();
         }
 
-        // The day counts in the overworld, also while nobody is online (all levels share
-        // its time of day)
+        // The day counts in the overworld (all levels share its time of day)
         final ServerLevel overworld = server.overworld();
         if (overworld != null) {
             long currentDayTime = overworld.getDayTime() % 24000L; // Time of day in ticks (0–23999)
@@ -104,8 +103,9 @@ public class DayTracker {
 
             // Detect when day time "wraps around" (from 23999 back to 0)
             // This happens when a full day passes, or when players sleep or use /time set
-            // day
-            if (currentDayTime < lastDayTime) {
+            // day. With nobody online the day stays put (pauseWhenEmpty)
+            if (currentDayTime < lastDayTime
+                    && !(ConfigManager.pauseWhenEmpty && server.getPlayerCount() == 0)) {
                 if (ConfigManager.startDelayDays > 0) {
                     // Normal play before the apocalypse starts counting: the day stays put
                     ConfigManager.startDelayDays--;

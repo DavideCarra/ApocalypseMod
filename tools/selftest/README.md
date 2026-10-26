@@ -57,7 +57,8 @@ Scenarios:
   vary by 10-20%.
 - `multiplayer`: two players log in through recording connections: both get
   the apocalypse state on login, the new day, the phase title and music on a
-  phase change; the days go on with nobody online. Prints `RESULT fails=N`.
+  phase change; the days stay put with nobody online
+  (`pauseWhenEmpty`) and go on when it is off. Prints `RESULT fails=N`.
 - `logic`: checks of the new behaviour (steps, restart, ritual, old configs,
   light sync, animal spawning, breeding, mobs left in unattended areas, heights
   after days skipped by hand, snow and ice melting, no fire after the end).

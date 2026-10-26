@@ -243,7 +243,7 @@ public class SelfTestNew {
                 check("multiplayer: " + n + " gets the phase music", r.has("STOPSOUND") && r.has("SOUND "), r.events.toString());
             }
             SelfTestCommon.log("MP events " + players.get(0).events);
-            // Everybody leaves: the days go on
+            // Everybody leaves: the apocalypse waits (pauseWhenEmpty, on by default)
             for (Recorded r : players)
                 SelfTestCommon.server.getPlayerList().remove(r.player);
             players.clear();
@@ -256,8 +256,23 @@ public class SelfTestNew {
             stage = 5;
             waitUntil = tick + 5;
         } else if (stage == 5 && tick >= waitUntil) {
-            check("multiplayer: days go on with nobody online", ConfigManager.apocalypseCurrentDay == mpDayBefore + 1,
+            check("multiplayer: the day stays put with nobody online", ConfigManager.pauseWhenEmpty
+                    && SelfTestCommon.server.getPlayerCount() == 0 && ConfigManager.apocalypseCurrentDay == mpDayBefore,
+                    "pause=" + ConfigManager.pauseWhenEmpty + " players=" + SelfTestCommon.server.getPlayerCount()
+                            + " before=" + mpDayBefore + " now=" + ConfigManager.apocalypseCurrentDay);
+            // Switched off: the days go on with nobody online
+            ConfigManager.pauseWhenEmpty = false;
+            level.setDayTime(95990);
+            stage = 6;
+            waitUntil = tick + 2;
+        } else if (stage == 6 && tick >= waitUntil) {
+            level.setDayTime(96010);
+            stage = 7;
+            waitUntil = tick + 5;
+        } else if (stage == 7 && tick >= waitUntil) {
+            check("multiplayer: days go on with nobody online when the pause is off", ConfigManager.apocalypseCurrentDay == mpDayBefore + 1,
                     "before=" + mpDayBefore + " now=" + ConfigManager.apocalypseCurrentDay);
+            ConfigManager.pauseWhenEmpty = true;
             ConfigManager.showHeatBar = true;
             defaults();
             SelfTestCommon.log("RESULT fails=" + fails);
@@ -284,8 +299,8 @@ public class SelfTestNew {
             java.nio.file.Files.createDirectories(fresh);
             ConfigManager.load(fresh);
             check("config: a new world starts on day 0 with the defaults", ConfigManager.apocalypseCurrentDay == 0
-                    && ConfigManager.apocalypseMaxDays == 50 && !ConfigManager.apocalypseActive
-                    && java.nio.file.Files.exists(fresh.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties")),
+                    && ConfigManager.apocalypseMaxDays == 50 && !ConfigManager.apocalypseActive && ConfigManager.pauseWhenEmpty
+                    && java.nio.file.Files.readString(fresh.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties")).contains("pauseWhenEmpty=true"),
                     "day=" + ConfigManager.apocalypseCurrentDay + " max=" + ConfigManager.apocalypseMaxDays + " active=" + ConfigManager.apocalypseActive);
 
             // A world the mod ran in before: carries on from the old shared config
@@ -308,12 +323,12 @@ public class SelfTestNew {
 
             // An invalid value is ignored (the default stays)
             java.nio.file.Files.writeString(fresh.resolve("serverconfig").resolve("judgementdaymod-apocalypse.properties"),
-                    "apocalypseMaxDays=abc\napocalypseCurrentDay=3\nstartBeforeApocalypse=false\nstartDelayDays=4\nshowHeatBar=false\n");
+                    "apocalypseMaxDays=abc\napocalypseCurrentDay=3\nstartBeforeApocalypse=false\nstartDelayDays=4\nshowHeatBar=false\npauseWhenEmpty=false\n");
             ConfigManager.load(fresh);
             check("config: invalid values ignored, new settings read", ConfigManager.apocalypseMaxDays == 50
-                    && ConfigManager.apocalypseCurrentDay == 3 && ConfigManager.startDelayDays == 4 && !ConfigManager.showHeatBar,
+                    && ConfigManager.apocalypseCurrentDay == 3 && ConfigManager.startDelayDays == 4 && !ConfigManager.showHeatBar && !ConfigManager.pauseWhenEmpty,
                     "max=" + ConfigManager.apocalypseMaxDays + " day=" + ConfigManager.apocalypseCurrentDay
-                            + " delay=" + ConfigManager.startDelayDays + " heat=" + ConfigManager.showHeatBar);
+                            + " delay=" + ConfigManager.startDelayDays + " heat=" + ConfigManager.showHeatBar + " pause=" + ConfigManager.pauseWhenEmpty);
         } finally {
             java.nio.file.Files.writeString(shared, sharedBefore);
             ConfigManager.load(world);
