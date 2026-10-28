@@ -51,7 +51,8 @@ Scenarios:
   world generation, `io`) and the packets sent to the player with their size,
   raw and compressed as on a dedicated server. `realistic=true` leaves fire,
   random ticks and the rest of the world running (only time, weather and
-  natural spawning are frozen). If the mod is instrumented with a public
+  natural spawning are frozen). `PERFTOP` lists the ticks with the most end of tick
+  work of the mod (`t<tick of the window>=<ms>`). If the mod is instrumented with a public
   `Generator.PROF` array it is printed too (`PROF` lines). Run it on both
   versions, one after the other (never two at once), and repeat: single runs
   vary by 10-20%.
@@ -59,6 +60,22 @@ Scenarios:
   the apocalypse state on login, the new day, the phase title and music on a
   phase change; the days stay put with nobody online
   (`pauseWhenEmpty`) and go on when it is off. Prints `RESULT fails=N`.
+- `worldgen`: generates `size` x `size` new chunks at chunk `genX`, `genZ` (forced,
+  `day`, `active=false` for before the peak) and prints the time and CPU it took
+  (`gen`), the work after it (`process`, `processTicks` ticks, `sample=true` adds
+  `SAMPLE` lines: where the server thread spends its time) and what the chunks hold
+  (`GENCOUNT`, `GENORES`; `dumpOres=true` writes every ore of the inner area to
+  `<out_name>.ores`).
+- `watercheck`: the water removal of new chunks against the code it replaced (copied
+  in the harness), on the same new ocean and land chunks: blocks and heightmaps must
+  be the same (`WATERCHECK ... diffs=0`), with the time of both.
+- `retrofit`: on a world an older version generated after the peak (a `worldgen` run
+  of that version, same `genX`, `genZ`, `size`), the chunks are seen again: their
+  ores must come back (`RETRO before/after`, `.ores` dump to compare with a
+  `worldgen dumpOres=true` run of the new code), except in 3x3 chunks given a long
+  inhabited time (`touchX`, `touchZ`) and in a chunk with a chest (`chestX`,
+  `chestZ`). `only=even` sees half of them (keep the world and run again: the others
+  must get theirs after the restart).
 - `logic`: checks of the new behaviour (steps, restart, ritual, old configs,
   light sync, animal spawning, breeding, mobs left in unattended areas, heights
   after days skipped by hand, snow and ice melting, no fire after the end).

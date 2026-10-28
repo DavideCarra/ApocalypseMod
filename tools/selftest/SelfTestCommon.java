@@ -76,11 +76,22 @@ public class SelfTestCommon {
 
     // Falling block entities created during the run
     static int fallingJoined;
+    static final java.util.Map<String, Integer> fallingTypes = new java.util.TreeMap<>();
+    static final List<String> fallingWhere = new ArrayList<>();
 
     @SubscribeEvent
     public static void onFallingJoin(net.minecraftforge.event.entity.EntityJoinLevelEvent e) {
-        if (e.getEntity() instanceof FallingBlockEntity && !e.getLevel().isClientSide) {
+        if (e.getEntity() instanceof FallingBlockEntity f && !e.getLevel().isClientSide) {
             fallingJoined++;
+            int y = f.blockPosition().getY();
+            fallingTypes.merge(net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(f.getBlockState().getBlock()).getPath()
+                    + "@" + (y < 0 ? "below0" : y < 40 ? "0-39" : y < 60 ? "40-59" : y < 80 ? "60-79" : "80+"), 1, Integer::sum);
+            if (fallingWhere.size() < 6)
+                fallingWhere.add(f.blockPosition().toShortString() + " " + f.getBlockState().getBlock().getDescriptionId()
+                        + " below=" + e.getLevel().getBlockState(f.blockPosition().below()).getBlock().getDescriptionId()
+                        + " stack=" + java.util.Arrays.stream(Thread.currentThread().getStackTrace()).skip(3).limit(14)
+                                .map(el -> el.getClassName().substring(el.getClassName().lastIndexOf('.') + 1) + "." + el.getMethodName())
+                                .collect(java.util.stream.Collectors.joining("<")));
         }
     }
 
@@ -104,6 +115,27 @@ public class SelfTestCommon {
                 compareTick();
             } else if (scenario().equals("generate")) {
                 generateTick();
+            } else if (scenario().equals("worldgen")) {
+                worldgenTick();
+            } else if (scenario().equals("retrofit")) {
+                retrofitTick();
+            } else if (scenario().equals("watercheck")) {
+                // Off the server thread: the noise asks the level for the structures around
+                // (Beardifier), which the server thread serves meanwhile
+                if (tick == 20) {
+                    checkThread = new Thread(() -> {
+                        try {
+                            waterCheck();
+                        } catch (Throwable t) {
+                            log("EXCEPTION " + t);
+                            for (StackTraceElement el : t.getStackTrace())
+                                log("   at " + el);
+                        }
+                    }, "selftest-water");
+                    checkThread.start();
+                } else if (tick > 20 && checkThread != null && !checkThread.isAlive()) {
+                    finish();
+                }
             }
         } catch (Throwable t) {
             log("EXCEPTION " + t);
@@ -112,6 +144,398 @@ public class SelfTestCommon {
             finish();
         }
         afterHarnessNanos = System.nanoTime();
+    }
+
+    // ---------------------------------------------------------------- water removal
+
+    /**
+     * The water removal of new chunks against the code it replaced: the same new chunks
+     * (vanilla noise, oceans and land) go through both, the blocks and the heightmaps must
+     * come out the same. Also at the status of the decoration (after the carvers).
+     */
+    static Thread checkThread;
+
+    static void waterCheck() throws Exception {
+        ServerLevel level = server.getLevel(Level.OVERWORLD);
+        net.minecraft.world.level.chunk.ChunkGenerator wrapper = level.getChunkSource().getGenerator();
+        java.lang.reflect.Field beforeField = wrapper.getClass().getDeclaredField("before");
+        beforeField.setAccessible(true);
+        net.minecraft.world.level.chunk.ChunkGenerator vanilla = (net.minecraft.world.level.chunk.ChunkGenerator) beforeField.get(wrapper);
+        java.lang.reflect.Method replace = wrapper.getClass().getDeclaredMethod("replaceWaterWithAir",
+                net.minecraft.world.level.chunk.ChunkAccess.class);
+        replace.setAccessible(true);
+        net.minecraft.world.level.levelgen.RandomState random = level.getChunkSource().randomState();
+        net.minecraft.core.Registry<Biome> biomes = level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME);
+        int gx = Integer.parseInt(props.getProperty("genX", "3000")), gz = Integer.parseInt(props.getProperty("genZ", "3000"));
+        int wantOcean = Integer.parseInt(props.getProperty("ocean", "80")), wantLand = Integer.parseInt(props.getProperty("land", "40"));
+        List<ChunkPos> picked = new ArrayList<>();
+        int ocean = 0, land = 0;
+        for (int i = 0; i < 4000 && (ocean < wantOcean || land < wantLand); i++) {
+            ChunkPos cp = new ChunkPos(gx + (i % 64) * 3, gz + (i / 64) * 3);
+            boolean isOcean = vanilla.getBiomeSource().getNoiseBiome(cp.getMiddleBlockX() >> 2, 15, cp.getMiddleBlockZ() >> 2,
+                    random.sampler()).is(BiomeTags.IS_OCEAN);
+            if (isOcean && ocean < wantOcean) {
+                ocean++;
+                picked.add(cp);
+            } else if (!isOcean && land < wantLand) {
+                land++;
+                picked.add(cp);
+            }
+        }
+        long oldNs = 0, newNs = 0, water = 0;
+        int diffs = 0, checked = 0;
+        for (ChunkPos cp : picked) {
+            for (boolean decorating : new boolean[] { false, true }) {
+                net.minecraft.world.level.chunk.ProtoChunk a = newChunk(level, vanilla, random, biomes, cp, decorating);
+                net.minecraft.world.level.chunk.ProtoChunk b = newChunk(level, vanilla, random, biomes, cp, decorating);
+                for (LevelChunkSection sec : a.getSections())
+                    for (int y = 0; y < 16; y++)
+                        for (int z = 0; z < 16; z++)
+                            for (int x = 0; x < 16; x++)
+                                if (sec.getBlockState(x, y, z).is(Blocks.WATER))
+                                    water++;
+                long t0 = System.nanoTime();
+                oldReplaceWaterWithAir(a);
+                long t1 = System.nanoTime();
+                replace.invoke(null, b);
+                long t2 = System.nanoTime();
+                oldNs += t1 - t0;
+                newNs += t2 - t1;
+                checked++;
+                String diff = compareChunks(a, b);
+                if (diff != null) {
+                    diffs++;
+                    if (diffs <= 5)
+                        log("WATERDIFF " + cp + " decorating=" + decorating + " " + diff);
+                }
+            }
+        }
+        log(String.format(java.util.Locale.ROOT, "WATERCHECK chunks=%d ocean=%d land=%d water=%d diffs=%d oldMs=%.1f newMs=%.1f", checked, ocean, land,
+                water, diffs, oldNs / 1e6, newNs / 1e6));
+    }
+
+    static net.minecraft.world.level.chunk.ProtoChunk newChunk(ServerLevel level, net.minecraft.world.level.chunk.ChunkGenerator vanilla,
+            net.minecraft.world.level.levelgen.RandomState random, net.minecraft.core.Registry<Biome> biomes, ChunkPos cp, boolean decorating) {
+        net.minecraft.world.level.chunk.ProtoChunk c = new net.minecraft.world.level.chunk.ProtoChunk(cp,
+                net.minecraft.world.level.chunk.UpgradeData.EMPTY, level, biomes, null);
+        net.minecraft.world.level.levelgen.blending.Blender blender = net.minecraft.world.level.levelgen.blending.Blender.empty();
+        vanilla.createBiomes(net.minecraft.Util.backgroundExecutor(), random, blender, level.structureManager(), c).join();
+        vanilla.fillFromNoise(net.minecraft.Util.backgroundExecutor(), blender, random, level.structureManager(), c).join();
+        if (decorating) {
+            // As when the decoration runs: after the carvers, with the final heightmaps
+            c.setStatus(net.minecraft.world.level.chunk.ChunkStatus.CARVERS);
+            Heightmap.primeHeightmaps(c, net.minecraft.world.level.chunk.ChunkStatus.CARVERS.heightmapsAfter());
+        }
+        return c;
+    }
+
+    /** The water removal as it was before (1.3.2). */
+    static void oldReplaceWaterWithAir(net.minecraft.world.level.chunk.ChunkAccess chunk) {
+        final LevelChunkSection[] sections = chunk.getSections();
+        final boolean[] sectionMayHaveWater = new boolean[sections.length];
+        for (int i = 0; i < sections.length; i++) {
+            sectionMayHaveWater[i] = sections[i] != null && sections[i].maybeHas(state -> state.is(Blocks.WATER));
+        }
+        final int minSection = chunk.getMinSection();
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                for (int i = 0; i < sections.length; i++) {
+                    if (!sectionMayHaveWater[i])
+                        continue;
+                    final int sectionMinY = (minSection + i) << 4;
+                    for (int y = sectionMinY; y < sectionMinY + 16; y++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+                        if (chunk.getBlockState(pos).is(Blocks.WATER)) {
+                            chunk.setBlockState(pos, Blocks.AIR.defaultBlockState(), false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** null if both chunks hold the same blocks and heightmaps. */
+    static String compareChunks(net.minecraft.world.level.chunk.ChunkAccess a, net.minecraft.world.level.chunk.ChunkAccess b) {
+        for (int i = 0; i < a.getSections().length; i++) {
+            LevelChunkSection sa = a.getSections()[i], sb = b.getSections()[i];
+            if (sa.hasOnlyAir() != sb.hasOnlyAir())
+                return "section " + i + " onlyAir " + sa.hasOnlyAir() + "/" + sb.hasOnlyAir();
+            for (int y = 0; y < 16; y++)
+                for (int z = 0; z < 16; z++)
+                    for (int x = 0; x < 16; x++)
+                        if (sa.getBlockState(x, y, z) != sb.getBlockState(x, y, z))
+                            return "block " + x + "," + ((a.getMinSection() + i) * 16 + y) + "," + z + " " + sa.getBlockState(x, y, z) + "/"
+                                    + sb.getBlockState(x, y, z);
+        }
+        for (Heightmap.Types type : Heightmap.Types.values()) {
+            boolean ha = a.hasPrimedHeightmap(type), hb = b.hasPrimedHeightmap(type);
+            if (ha != hb)
+                return "heightmap " + type + " present " + ha + "/" + hb;
+            if (ha && !java.util.Arrays.equals(a.getOrCreateHeightmapUnprimed(type).getRawData(),
+                    b.getOrCreateHeightmapUnprimed(type).getRawData()))
+                return "heightmap " + type + " differs";
+        }
+        return null;
+    }
+
+    // ---------------------------------------------------------------- worldgen
+
+    static int genStage, genTick;
+    static long genStartNanos;
+    static final List<int[]> genChunks = new ArrayList<>();
+
+    /**
+     * Generates size x size new chunks at (genX, genZ) (chunk coordinates) and prints the time
+     * and CPU it took, then the mod's work on them and what they hold.
+     */
+    static void worldgenTick() throws Exception {
+        ServerLevel level = server.getLevel(Level.OVERWORLD);
+        if (genStage == 0 && tick >= 20) {
+            freezeWorld(level);
+            configure();
+            ConfigManager.apocalypseActive = !"false".equals(props.getProperty("active", "true"));
+            int n = Integer.parseInt(props.getProperty("size", "20"));
+            int gx = Integer.parseInt(props.getProperty("genX", "2000"));
+            int gz = Integer.parseInt(props.getProperty("genZ", "2000"));
+            startWindow("gen");
+            genStartNanos = System.nanoTime();
+            for (int x = gx; x < gx + n; x++)
+                for (int z = gz; z < gz + n; z++) {
+                    genChunks.add(new int[] { x, z });
+                    level.setChunkForced(x, z, true);
+                }
+            genTick = tick;
+            genStage = 1;
+        } else if (genStage == 1) {
+            int loaded = 0;
+            for (int[] c : genChunks)
+                if (level.getChunkSource().getChunkNow(c[0], c[1]) != null)
+                    loaded++;
+            if (loaded == genChunks.size() || tick - genTick > 6000) {
+                log(String.format(java.util.Locale.ROOT, "GEN chunks=%d loaded=%d ms=%.0f ticks=%d", genChunks.size(), loaded,
+                        (System.nanoTime() - genStartNanos) / 1e6, tick - genTick));
+                endWindow();
+                startWindow("process");
+                if ("true".equals(props.getProperty("sample")))
+                    startSampler(Thread.currentThread());
+                genTick = tick;
+                genStage = 2;
+            }
+        } else if (genStage == 2 && tick - genTick >= Integer.parseInt(props.getProperty("processTicks", "600"))) {
+            endWindow();
+            stopSampler();
+            long ores = 0, logs = 0, leaves = 0, spawners = 0, amethyst = 0, chests = 0, lava = 0;
+            java.util.Map<String, Integer> starts = new java.util.TreeMap<>();
+            java.util.Map<String, Integer> oreTypes = new java.util.TreeMap<>();
+            net.minecraft.core.Registry<net.minecraft.world.level.levelgen.structure.Structure> structures = level.registryAccess()
+                    .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
+            for (int[] c : genChunks) {
+                LevelChunk chunk = level.getChunk(c[0], c[1]);
+                chunk.getAllStarts().forEach((structure, start) -> {
+                    if (start.isValid())
+                        starts.merge(String.valueOf(structures.getKey(structure)), 1, Integer::sum);
+                });
+                for (LevelChunkSection section : chunk.getSections()) {
+                    if (section.hasOnlyAir())
+                        continue;
+                    for (int y = 0; y < 16; y++)
+                        for (int z = 0; z < 16; z++)
+                            for (int x = 0; x < 16; x++) {
+                                BlockState st = section.getBlockState(x, y, z);
+                                if (st.is(net.minecraftforge.common.Tags.Blocks.ORES)) {
+                                    ores++;
+                                    oreTypes.merge(net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(st.getBlock()).getPath(), 1,
+                                            Integer::sum);
+                                } else if (st.is(net.minecraft.tags.BlockTags.LOGS))
+                                    logs++;
+                                else if (st.is(net.minecraft.tags.BlockTags.LEAVES))
+                                    leaves++;
+                                else if (st.is(Blocks.SPAWNER))
+                                    spawners++;
+                                else if (st.is(Blocks.AMETHYST_BLOCK) || st.is(Blocks.BUDDING_AMETHYST))
+                                    amethyst++;
+                                else if (st.is(Blocks.CHEST))
+                                    chests++;
+                                else if (st.is(Blocks.LAVA))
+                                    lava++;
+                            }
+                }
+            }
+            log("GENCOUNT ores=" + ores + " logs=" + logs + " leaves=" + leaves + " spawners=" + spawners + " amethyst=" + amethyst
+                    + " chests=" + chests + " lava=" + lava + " starts=" + starts);
+            log("GENORES " + oreTypes);
+            if ("true".equals(props.getProperty("dumpOres")))
+                dumpOres(level, "dump");
+            finish();
+        }
+    }
+
+    // Main thread stack samples: inclusive count of every method seen in a sample
+    static volatile boolean sampling;
+    static final java.util.Map<String, Integer> samples = new java.util.HashMap<>();
+    static int sampleCount;
+
+    static void startSampler(Thread target) {
+        sampling = true;
+        Thread t = new Thread(() -> {
+            while (sampling) {
+                java.util.Set<String> seen = new java.util.HashSet<>();
+                for (StackTraceElement e : target.getStackTrace())
+                    seen.add(e.getClassName().substring(e.getClassName().lastIndexOf('.') + 1) + "." + e.getMethodName());
+                synchronized (samples) {
+                    sampleCount++;
+                    for (String m : seen)
+                        samples.merge(m, 1, Integer::sum);
+                }
+                try {
+                    Thread.sleep(2);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+        }, "selftest-sampler");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    static void stopSampler() {
+        if (!sampling)
+            return;
+        sampling = false;
+        synchronized (samples) {
+            log("SAMPLES total=" + sampleCount);
+            samples.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).limit(70)
+                    .forEach(e -> log(String.format(java.util.Locale.ROOT, "SAMPLE %5.1f%% %s", 100.0 * e.getValue() / sampleCount, e.getKey())));
+        }
+    }
+
+    // ---------------------------------------------------------------- ore retrofit
+
+    /**
+     * Chunks an older version generated without ores (genX, genZ, size: the forced area of
+     * that world) are seen again: their ores must come back, except in the chunks players
+     * stayed around (touchX, touchZ: 3x3 chunks given a long inhabited time) or left
+     * something in (a chest at the centre of chestX, chestZ).
+     */
+    static void retrofitTick() throws Exception {
+        ServerLevel level = server.getLevel(Level.OVERWORLD);
+        int n = Integer.parseInt(props.getProperty("size", "24"));
+        int gx = Integer.parseInt(props.getProperty("genX", "2000"));
+        int gz = Integer.parseInt(props.getProperty("genZ", "2000"));
+        int tx = Integer.parseInt(props.getProperty("touchX", String.valueOf(gx + 6)));
+        int tz = Integer.parseInt(props.getProperty("touchZ", String.valueOf(gz + 6)));
+        int cx = Integer.parseInt(props.getProperty("chestX", String.valueOf(gx + 15)));
+        int cz = Integer.parseInt(props.getProperty("chestZ", String.valueOf(gz + 15)));
+        if (genStage == 0 && tick >= 20) {
+            freezeWorld(level);
+            configure();
+            ConfigManager.apocalypseActive = !"false".equals(props.getProperty("active", "true"));
+            for (int x = gx; x < gx + n; x++)
+                for (int z = gz; z < gz + n; z++) {
+                    genChunks.add(new int[] { x, z });
+                    level.setChunkForced(x, z, true);
+                }
+            genTick = tick;
+            genStage = 1;
+        } else if (genStage == 1) {
+            for (int[] c : genChunks)
+                if (level.getChunkSource().getChunkNow(c[0], c[1]) == null)
+                    return;
+            for (int x = tx; x < tx + 3; x++)
+                for (int z = tz; z < tz + 3; z++)
+                    level.getChunk(x, z).setInhabitedTime(20 * 60 * 20);
+            // Underground: the surface burns
+            level.setBlock(new BlockPos((cx << 4) + 8, 10, (cz << 4) + 8), Blocks.CHEST.defaultBlockState(), 3);
+            log("RETRO before " + oreCounts(level, "inner") + " touched=" + oreCounts(level, "touched") + " chest="
+                    + oreCounts(level, "chest"));
+            startWindow("retrofit");
+            if ("true".equals(props.getProperty("sample")))
+                startSampler(Thread.currentThread());
+            // only=even: half of the chunks (as a checkerboard), the others are seen later
+            boolean even = "even".equals(props.getProperty("only"));
+            for (int[] c : genChunks)
+                if (!even || ((c[0] + c[1]) & 1) == 0)
+                    com.creatormc.judgementdaymod.handlers.DayTracker.enqueueChunk(new ChunkToProcess(level, c[0], c[1]));
+            genTick = tick;
+            genStage = 2;
+        } else if (genStage == 2 && tick - genTick >= Integer.parseInt(props.getProperty("processTicks", "600"))) {
+            endWindow();
+            stopSampler();
+            log("RETRO after " + oreCounts(level, "inner") + " touched=" + oreCounts(level, "touched") + " chest="
+                    + oreCounts(level, "chest"));
+            dumpOres(level, "dump");
+            finish();
+        }
+    }
+
+    /** The chunks of a part of the test area: inner (2 chunks from its sides), touched, chest. */
+    static List<int[]> area(String part) {
+        int n = Integer.parseInt(props.getProperty("size", "24"));
+        int gx = Integer.parseInt(props.getProperty("genX", "2000"));
+        int gz = Integer.parseInt(props.getProperty("genZ", "2000"));
+        List<int[]> chunks = new ArrayList<>();
+        if (part.equals("touched")) {
+            int tx = Integer.parseInt(props.getProperty("touchX", String.valueOf(gx + 6)));
+            int tz = Integer.parseInt(props.getProperty("touchZ", String.valueOf(gz + 6)));
+            for (int x = tx; x < tx + 3; x++)
+                for (int z = tz; z < tz + 3; z++)
+                    chunks.add(new int[] { x, z });
+        } else if (part.equals("chest")) {
+            chunks.add(new int[] { Integer.parseInt(props.getProperty("chestX", String.valueOf(gx + 15))),
+                    Integer.parseInt(props.getProperty("chestZ", String.valueOf(gz + 15))) });
+        } else {
+            int m = Integer.parseInt(props.getProperty("margin", "2"));
+            for (int x = gx + m; x < gx + n - m; x++)
+                for (int z = gz + m; z < gz + n - m; z++)
+                    chunks.add(new int[] { x, z });
+        }
+        return chunks;
+    }
+
+    /** Decoration ores (and all ores) in a part of the area. */
+    static String oreCounts(ServerLevel level, String part) {
+        long ores = 0, decoration = 0;
+        for (int[] c : area(part)) {
+            LevelChunk chunk = level.getChunk(c[0], c[1]);
+            for (LevelChunkSection section : chunk.getSections()) {
+                if (section.hasOnlyAir())
+                    continue;
+                for (int y = 0; y < 16; y++)
+                    for (int z = 0; z < 16; z++)
+                        for (int x = 0; x < 16; x++) {
+                            BlockState st = section.getBlockState(x, y, z);
+                            if (st.is(net.minecraftforge.common.Tags.Blocks.ORES)) {
+                                ores++;
+                                if (!st.is(Blocks.COPPER_ORE) && !st.is(Blocks.DEEPSLATE_IRON_ORE))
+                                    decoration++;
+                            }
+                        }
+            }
+        }
+        return part + "{ores=" + ores + " decorationOres=" + decoration + "}";
+    }
+
+    /** Every ore block of the inner area, to compare two runs (file <output>.ores). */
+    static void dumpOres(ServerLevel level, String tag) throws IOException {
+        List<String> lines = new ArrayList<>();
+        for (int[] c : area("inner")) {
+            LevelChunk chunk = level.getChunk(c[0], c[1]);
+            LevelChunkSection[] sections = chunk.getSections();
+            for (int i = 0; i < sections.length; i++) {
+                if (sections[i].hasOnlyAir())
+                    continue;
+                for (int y = 0; y < 16; y++)
+                    for (int z = 0; z < 16; z++)
+                        for (int x = 0; x < 16; x++) {
+                            BlockState st = sections[i].getBlockState(x, y, z);
+                            if (st.is(net.minecraftforge.common.Tags.Blocks.ORES))
+                                lines.add(((c[0] << 4) + x) + " " + ((chunk.getMinSection() + i) * 16 + y) + " " + ((c[1] << 4) + z) + " "
+                                        + net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(st.getBlock()).getPath());
+                        }
+            }
+        }
+        Files.write(FMLPaths.GAMEDIR.get().resolve(props.getProperty("output", "selftest-out.txt") + ".ores"), lines);
+        log("DUMPED " + tag + " ores=" + lines.size());
     }
 
     // ---------------------------------------------------------------- perf
@@ -229,6 +653,15 @@ public class SelfTestCommon {
             log("PROF error " + e);
         }
         log(sb.toString());
+        // The heaviest ticks of the mod's end of tick work, with their place in the window
+        Integer[] order = new Integer[ticks.size()];
+        for (int i = 0; i < order.length; i++)
+            order[i] = i;
+        java.util.Arrays.sort(order, (x, y) -> Long.compare(ticks.get(y)[1], ticks.get(x)[1]));
+        StringBuilder top = new StringBuilder("PERFTOP window=" + perfWindow);
+        for (int i = 0; i < Math.min(8, order.length); i++)
+            top.append(String.format(java.util.Locale.ROOT, " t%d=%.1f", order[i], ticks.get(order[i])[1] / 1e6));
+        log(top.toString());
         perfWindow = null;
     }
 
@@ -945,7 +1378,9 @@ public class SelfTestCommon {
     }
 
     static void finish() {
-        log("FALLING joined=" + fallingJoined);
+        log("FALLING joined=" + fallingJoined + " types=" + fallingTypes);
+        for (String w : fallingWhere)
+            log("FALLINGAT " + w);
         try {
             Files.write(FMLPaths.GAMEDIR.get().resolve(props.getProperty("output", "selftest-out.txt")), out);
         } catch (IOException e) {

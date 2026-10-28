@@ -4,6 +4,7 @@ import javax.annotation.Nonnull;
 
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
@@ -13,6 +14,9 @@ public class ApocalypseChunkData extends SavedData {
     // Primitive map (no Long/Integer boxing). Accessed both by the server thread and by
     // the world generation threads (buildSurface), so every access is synchronized.
     private final Long2IntOpenHashMap chunkPhases = new Long2IntOpenHashMap();
+    // Chunks without ores that got some from a neighbour's (see OreRetrofit): theirs are
+    // still to place
+    private final LongOpenHashSet oresDue = new LongOpenHashSet();
 
     private static final String FILE_ID = "judgementday_chunkdata";
 
@@ -37,8 +41,19 @@ public class ApocalypseChunkData extends SavedData {
         setDirty(); // segnala che deve essere salvato su disco
     }
 
+    public synchronized boolean isOresDue(long chunk) {
+        return oresDue.contains(chunk);
+    }
+
+    public synchronized void setOresDue(long chunk, boolean due) {
+        if (due ? oresDue.add(chunk) : oresDue.remove(chunk))
+            setDirty();
+    }
+
     public static ApocalypseChunkData load(CompoundTag tag) {
         ApocalypseChunkData data = new ApocalypseChunkData();
+        for (long chunk : tag.getLongArray("OresDue"))
+            data.oresDue.add(chunk);
         CompoundTag chunksTag = tag.getCompound("Chunks");
 
         for (String key : chunksTag.getAllKeys()) {
@@ -55,7 +70,9 @@ public class ApocalypseChunkData extends SavedData {
         // threads setting phases meanwhile do not have to wait
         final long[] keys;
         final int[] phases;
+        final long[] due;
         synchronized (this) {
+            due = oresDue.toLongArray();
             keys = new long[chunkPhases.size()];
             phases = new int[keys.length];
             int i = 0;
@@ -70,6 +87,8 @@ public class ApocalypseChunkData extends SavedData {
             chunksTag.putInt(String.valueOf(keys[i]), phases[i]);
         }
         tag.put("Chunks", chunksTag);
+        if (due.length > 0)
+            tag.putLongArray("OresDue", due);
         return tag;
     }
 }
