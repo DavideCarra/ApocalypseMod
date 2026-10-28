@@ -24,6 +24,7 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkStatus;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraftforge.common.Tags;
 import net.minecraftforge.event.level.ChunkEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -32,7 +33,9 @@ import net.minecraftforge.fml.common.Mod;
  * Older versions generated the chunks of an active apocalypse without their decoration,
  * so without ores (see ApocalypseChunkGenerator). When such a chunk is seen and players
  * only went by it, its ores are placed as its decoration would have placed them: it ends
- * up like a chunk generated now. Done once: the chunk has its ores afterwards.
+ * up like a chunk generated now. Done once: the chunk has its ores afterwards. Only in the
+ * worlds an older version played past the peak (see ApocalypseChunkData): never in the
+ * others, whose chunks all have their ores.
  */
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class OreRetrofit {
@@ -41,12 +44,9 @@ public final class OreRetrofit {
     // Players spent at most this long around the chunk (ticks): they only went by it
     static final long MAX_INHABITED_TIME = 2 * 60 * 20;
 
-    // Ores only the decoration places (the ore veins of the terrain place copper ore and
-    // deepslate iron ore): a chunk with none of them was generated without it
-    private static final Set<Block> DECORATION_ORES = Set.of(Blocks.COAL_ORE, Blocks.DEEPSLATE_COAL_ORE,
-            Blocks.IRON_ORE, Blocks.DEEPSLATE_COPPER_ORE, Blocks.GOLD_ORE, Blocks.DEEPSLATE_GOLD_ORE,
-            Blocks.REDSTONE_ORE, Blocks.DEEPSLATE_REDSTONE_ORE, Blocks.LAPIS_ORE, Blocks.DEEPSLATE_LAPIS_ORE,
-            Blocks.DIAMOND_ORE, Blocks.DEEPSLATE_DIAMOND_ORE, Blocks.EMERALD_ORE, Blocks.DEEPSLATE_EMERALD_ORE);
+    // Ores the ore veins of the terrain place: every other ore (of any mod) comes from the
+    // decoration, a chunk with none of them was generated without it
+    private static final Set<Block> VEIN_ORES = Set.of(Blocks.COPPER_ORE, Blocks.DEEPSLATE_IRON_ORE);
 
     // Chunks looked at since the server started (server thread)
     private static final LongOpenHashSet checked = new LongOpenHashSet();
@@ -65,10 +65,13 @@ public final class OreRetrofit {
      * @return true if its ores were placed now
      */
     public static boolean onSeen(ServerLevel level, LevelChunk chunk) {
+        // Only in a world an older version played past the peak (new worlds never)
+        final ApocalypseChunkData data = ApocalypseChunkData.get(level);
+        if (!data.oresRetrofit())
+            return false;
         final long key = chunk.getPos().toLong();
         if (!checked.add(key))
             return false;
-        final ApocalypseChunkData data = ApocalypseChunkData.get(level);
         // A neighbour's ores reaching into a chunk without them do not make it decorated
         if (!data.isOresDue(key) && hasDecorationOres(chunk))
             return false;
@@ -97,10 +100,11 @@ public final class OreRetrofit {
         }
     }
 
-    /** True if the chunk holds an ore only the decoration places (palettes only: cheap). */
+    /** True if the chunk holds an ore the decoration places (palettes only: cheap). */
     private static boolean hasDecorationOres(LevelChunk chunk) {
         for (LevelChunkSection section : chunk.getSections()) {
-            if (!section.hasOnlyAir() && section.maybeHas(state -> DECORATION_ORES.contains(state.getBlock())))
+            if (!section.hasOnlyAir() && section.maybeHas(
+                    state -> state.is(Tags.Blocks.ORES) && !VEIN_ORES.contains(state.getBlock())))
                 return true;
         }
         return false;

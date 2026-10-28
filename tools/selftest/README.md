@@ -75,7 +75,9 @@ Scenarios:
   `worldgen dumpOres=true` run of the new code), except in 3x3 chunks given a long
   inhabited time (`touchX`, `touchZ`) and in a chunk with a chest (`chestX`,
   `chestZ`). `only=even` sees half of them (keep the world and run again: the others
-  must get theirs after the restart).
+  must get theirs after the restart). The world's config must be past the peak
+  (`RETRO retrofit=true`): a world never played past it by an older version keeps
+  the retrofit off (`worldgen` prints `GENRETROFIT`, false for a new world).
 - `logic`: checks of the new behaviour (steps, restart, ritual, old configs,
   light sync, animal spawning, breeding, mobs left in unattended areas, heights
   after days skipped by hand, snow and ice melting, no fire after the end).

@@ -364,6 +364,7 @@ public class SelfTestCommon {
             log("GENCOUNT ores=" + ores + " logs=" + logs + " leaves=" + leaves + " spawners=" + spawners + " amethyst=" + amethyst
                     + " chests=" + chests + " lava=" + lava + " starts=" + starts);
             log("GENORES " + oreTypes);
+            log("GENRETROFIT " + ApocalypseChunkData.get(level).oresRetrofit());
             if ("true".equals(props.getProperty("dumpOres")))
                 dumpOres(level, "dump");
             finish();
@@ -446,6 +447,7 @@ public class SelfTestCommon {
                     level.getChunk(x, z).setInhabitedTime(20 * 60 * 20);
             // Underground: the surface burns
             level.setBlock(new BlockPos((cx << 4) + 8, 10, (cz << 4) + 8), Blocks.CHEST.defaultBlockState(), 3);
+            log("RETRO retrofit=" + ApocalypseChunkData.get(level).oresRetrofit());
             log("RETRO before " + oreCounts(level, "inner") + " touched=" + oreCounts(level, "touched") + " chest="
                     + oreCounts(level, "chest"));
             startWindow("retrofit");

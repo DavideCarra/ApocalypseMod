@@ -88,7 +88,8 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
 
     private ApocalypseChunkGenerator(ChunkGenerator before, BiomeSource biomeSource,
             Map<Holder<Biome>, BiomeGenerationSettings> active) {
-        super(biomeSource, biome -> active.computeIfAbsent(biome, ApocalypseChunkGenerator::withoutSurfaceDecoration));
+        super(biomeSource, biome -> active.computeIfAbsent(biome,
+                b -> withoutSurfaceDecoration(before.getBiomeGenerationSettings(b))));
         this.before = before; // delegate to the vanilla generator passed from JSON
         this.activeSettings = active;
     }
@@ -103,16 +104,16 @@ public class ApocalypseChunkGenerator extends ChunkGenerator {
     }
 
     private BiomeGenerationSettings activeSettings(Holder<Biome> biome) {
-        return activeSettings.computeIfAbsent(biome, ApocalypseChunkGenerator::withoutSurfaceDecoration);
+        return activeSettings.computeIfAbsent(biome, b -> withoutSurfaceDecoration(before.getBiomeGenerationSettings(b)));
     }
 
     /**
-     * The decoration of a biome without the steps that only grow on the surface and without
-     * water springs (new chunks hold no water then, see fillFromNoise). The other features
-     * keep their order (and so their random seeds): ores and the rest come out as in vanilla.
+     * The decoration of a biome, as the generator of the world has it, without the steps
+     * that only grow on the surface and without water springs (new chunks hold no water
+     * then, see fillFromNoise). The other features keep their order (and so their random
+     * seeds): ores and the rest come out as in vanilla.
      */
-    private static BiomeGenerationSettings withoutSurfaceDecoration(Holder<Biome> biome) {
-        BiomeGenerationSettings settings = biome.value().getGenerationSettings();
+    private static BiomeGenerationSettings withoutSurfaceDecoration(BiomeGenerationSettings settings) {
         BiomeGenerationSettings.PlainBuilder builder = new BiomeGenerationSettings.PlainBuilder();
         List<HolderSet<PlacedFeature>> features = settings.features();
         for (int step = 0; step < features.size(); step++) {
