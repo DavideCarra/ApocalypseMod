@@ -59,7 +59,9 @@ Scenarios:
 - `multiplayer`: two players log in through recording connections: both get
   the apocalypse state on login, the new day, the phase title and music on a
   phase change; the days stay put with nobody online
-  (`pauseWhenEmpty`) and go on when it is off. Prints `RESULT fails=N`.
+  (`pauseWhenEmpty`) and go on when it is off; the sun heats a player at the bottom
+  of a shaft open to the sky below the damage height, not one in a closed room at
+  the same depth. Prints `RESULT fails=N`.
 - `worldgen`: generates `size` x `size` new chunks at chunk `genX`, `genZ` (forced,
   `day`, `active=false` for before the peak) and prints the time and CPU it took
   (`gen`), the work after it (`process`, `processTicks` ticks, `sample=true` adds
