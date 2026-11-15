@@ -1,0 +1,221 @@
+package com.creatormc.judgementdaymod.handlers;
+
+import com.creatormc.judgementdaymod.models.HeatSyncPacket;
+import com.creatormc.judgementdaymod.setup.JudgementDayMod;
+import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
+import com.creatormc.judgementdaymod.utilities.ConfigManager;
+
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.AABB;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+
+import java.util.*;
+
+@EventBusSubscriber(modid = JudgementDayMod.MODID)
+public class ApocalypseDamageHandler {
+
+    private static int tickCounter = 0;
+    private static final int TICK_INTERVAL = 20; // 1 second
+
+    // Map UUID → heat level (0–10)
+    private static final Map<UUID, Float> heatLevels = new HashMap<>();
+
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent.Post event) {
+        if (event.getLevel().isClientSide())
+            return;
+
+        // If apocalypse is over, do not damage entities
+        if (ConfigManager.apocalypseCurrentDay >= ConfigManager.apocalypseEndDay
+                || ConfigManager.apocalypseCurrentDay < 0) {
+            return;
+        }
+        Level level = event.getLevel();
+        if (!level.dimension().equals(Level.OVERWORLD))
+            return;
+
+        tickCounter++;
+        if (tickCounter < TICK_INTERVAL)
+            return;
+        tickCounter = 0;
+
+        double percent = Phase.toPercent(ConfigManager.apocalypseCurrentDay, ConfigManager.apocalypseMaxDays);
+
+        if (!(level instanceof ServerLevel serverLevel))
+            return;
+
+        // Build unified list of living entities + players without duplicates
+        Set<UUID> seen = new HashSet<>();
+        List<LivingEntity> allLiving = new ArrayList<>();
+
+        for (ServerPlayer p : serverLevel.players()) {
+            AABB box = p.getBoundingBox().inflate(64);
+            for (LivingEntity e : serverLevel.getEntitiesOfClass(LivingEntity.class, box)) {
+                if (seen.add(e.getUUID()))
+                    allLiving.add(e);
+            }
+            allLiving.add(p);
+        }
+
+        // Loop through all living entities
+        for (LivingEntity entity : allLiving) {
+
+            if (entity instanceof Player p && (p.isCreative() || p.isSpectator()))
+                continue;
+
+            UUID id = entity.getUUID();
+            float heat = heatLevels.getOrDefault(id, 0f);
+
+            boolean isUnderCover;
+            boolean isInWater = entity.isInWater();
+            boolean isInRain = level.isRainingAt(entity.blockPosition());
+            boolean isInBubble = entity.getBlockStateOn().is(Blocks.BUBBLE_COLUMN);
+            boolean isInCooling = isInWater || isInRain || isInBubble;
+            double y = entity.getY();
+
+            boolean isNight = !level.isDay();
+
+            // === HEAT MANAGEMENT ===
+            if (percent < 0)
+                continue;
+
+            // The sun reaches the bottom of a hole open to the sky, however deep
+            isUnderCover = !level.canSeeSky(entity.blockPosition());
+
+            // Normalize [0..1]
+            float pctNorm = (float) Math.max(0, Math.min(1.0, percent / 100.0));
+
+            if (percent < 20.0) {
+                float growth = 0.25f;
+
+                if (isUnderCover)
+                    heat -= 0.15f;
+                if (isInCooling)
+                    heat -= 0.4f;
+                if (isNight)
+                    heat -= 0.1f;
+                if (!isUnderCover && !isInCooling && !isNight)
+                    heat += growth;
+            } else {
+                // Above the damage height, or anywhere under the open sky
+                if (y >= ConfigManager.minDamageHeight || !isUnderCover) {
+
+                    float growth = (float) (0.25f + 0.75f * pctNorm);
+
+                    // At night between 20–60% → halve effect
+                    if (isNight && percent <= 60.0)
+                        growth *= 0.5f;
+
+                    if (percent >= 40.0) {
+                        if (isUnderCover)
+                            growth *= 0.9f;
+                        if (isInCooling)
+                            growth *= 0.7f;
+                    } else {
+                        if (isUnderCover)
+                            heat -= 0.2f;
+                        if (isInCooling)
+                            heat -= 0.5f;
+                    }
+
+                    heat += growth;
+
+                } else {
+                    if (isUnderCover)
+                        heat -= 0.3f;
+                    if (isInCooling)
+                        heat -= 1.0f;
+                }
+            }
+
+            // Clamp 0–10
+            heat = Math.max(0f, Math.min(10f, heat));
+
+            // === APPLY FIRE EFFECT AND DAMAGE ===
+            if (heat >= 10f) {
+                entity.igniteForSeconds(8);
+                DamageSource fireSource = level.damageSources().inFire();
+                float damage = 2.0F;
+
+                // At night between 20–60% → half damage
+                if (isNight && percent > 20.0 && percent <= 60.0)
+                    damage *= 0.5f;
+
+                entity.hurt(fireSource, damage);
+            } else if (heat >= 7f) {
+                entity.igniteForSeconds(3);
+            }
+
+            // Save updated value
+            heatLevels.put(id, heat);
+
+            // Send packet to client
+            if (entity instanceof ServerPlayer serverPlayer) {
+                NetworkHandler.sendToClient(new HeatSyncPacket(heat), serverPlayer);
+            }
+        }
+    }
+
+    /**
+     * Forgets the heat of entities that are gone for good (killed or discarded, e.g.
+     * despawned), so the map does not grow forever. Entities that are only unloaded
+     * (chunk unloaded, player logged out, dimension change) keep their heat.
+     */
+    @SubscribeEvent
+    public static void onEntityLeave(EntityLeaveLevelEvent event) {
+        if (event.getLevel().isClientSide())
+            return;
+
+        Entity entity = event.getEntity();
+        Entity.RemovalReason reason = entity.getRemovalReason();
+        if (reason != null && reason.shouldDestroy()) {
+            heatLevels.remove(entity.getUUID());
+        }
+    }
+
+    /**
+     * Forgets the heat of an entity that will never come back.
+     */
+    public static void forget(UUID id) {
+        heatLevels.remove(id);
+    }
+
+    @SubscribeEvent
+    public static void onEntityDeath(LivingDeathEvent event) {
+        LivingEntity entity = event.getEntity();
+        UUID id = entity.getUUID();
+
+        // Remove from map
+        heatLevels.remove(id);
+
+        // Send reset packet to client (if player)
+        if (entity instanceof ServerPlayer serverPlayer) {
+            NetworkHandler.sendToClient(new HeatSyncPacket(0f), serverPlayer);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
+        if (event.getEntity() instanceof ServerPlayer serverPlayer) {
+            UUID id = serverPlayer.getUUID();
+
+            // Force reset heat on respawn
+            heatLevels.put(id, 0f);
+
+            // Send reset packet
+            NetworkHandler.sendToClient(new HeatSyncPacket(0f), serverPlayer);
+        }
+    }
+}
