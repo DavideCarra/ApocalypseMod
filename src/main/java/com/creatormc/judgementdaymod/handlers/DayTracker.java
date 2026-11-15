@@ -33,6 +33,7 @@ import com.creatormc.judgementdaymod.utilities.ChunkLightSync;
 import com.creatormc.judgementdaymod.utilities.ConfigManager;
 import com.creatormc.judgementdaymod.utilities.Generator;
 import com.creatormc.judgementdaymod.utilities.LightChecks;
+import com.creatormc.judgementdaymod.utilities.OreRetrofit;
 
 @Mod.EventBusSubscriber(modid = JudgementDayMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class DayTracker {
@@ -125,6 +126,10 @@ public class DayTracker {
             lastDayTime = currentDayTime;
         }
 
+        // Chunks without ores that waited for their neighbours (see OreRetrofit)
+        if (overworld != null)
+            OreRetrofit.tick(overworld);
+
         // Nothing queued: skip the batch allocation
         if (chunksToProcess.isEmpty() && carriedOver.isEmpty())
             return;
@@ -200,6 +205,7 @@ public class DayTracker {
         }
         ChunkLightSync.clear();
         LightChecks.clear();
+        OreRetrofit.clear();
         Generator.clearPendingFalls();
         Generator.resetState();
     }
@@ -214,6 +220,7 @@ public class DayTracker {
         }
         ChunkLightSync.clear();
         LightChecks.clear();
+        OreRetrofit.clear();
         Generator.clearPendingFalls();
     }
 

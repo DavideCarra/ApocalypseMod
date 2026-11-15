@@ -40,9 +40,9 @@ import net.minecraftforge.fml.common.Mod;
  * Every overworld mob remembers the last day it was in the loaded world (written
  * when it is saved with its chunk, when the server stops and on every new day). When
  * it is loaded back after at least one full apocalypse day, it is not loaded back if
- * it was exposed (sky above it, above the damage height, not in water, not immune
- * to fire, not protected by another mod): it burned while nobody was looking. Mobs
- * sheltered underground, under a roof or in water survive.
+ * it was exposed (under the open sky, at any depth, not in water, not immune to fire,
+ * not protected by another mod): it burned while nobody was looking. Mobs sheltered
+ * underground, under a roof or in water survive.
  *
  * A mob usually comes back before its chunk catches up on the steps it missed: one
  * that survives then (e.g. under water that is about to evaporate, or under trees
@@ -212,8 +212,6 @@ public class UnattendedChunkHandler {
         // Fire immune or invulnerable mobs never take the apocalypse fire damage
         final DamageSource fire = level.damageSources().inFire();
         if (mob.isInvulnerableTo(fire) || mob.hasEffect(MobEffects.FIRE_RESISTANCE))
-            return false;
-        if (mob.getY() < ConfigManager.minDamageHeight)
             return false;
 
         // Read from the chunk in memory: never load or wait for one here

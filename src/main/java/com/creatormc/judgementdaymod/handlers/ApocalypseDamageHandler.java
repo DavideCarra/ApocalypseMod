@@ -91,11 +91,8 @@ public class ApocalypseDamageHandler {
             if (percent < 0)
                 continue;
 
-            if (entity.getY() < ConfigManager.minDamageHeight - 5) {
-                isUnderCover = true; // no need to check the sky this deep
-            } else {
-                isUnderCover = !level.canSeeSky(entity.blockPosition());
-            }
+            // The sun reaches the bottom of a hole open to the sky, however deep
+            isUnderCover = !level.canSeeSky(entity.blockPosition());
 
             // Normalize [0..1]
             float pctNorm = (float) Math.max(0, Math.min(1.0, percent / 100.0));
@@ -112,7 +109,8 @@ public class ApocalypseDamageHandler {
                 if (!isUnderCover && !isInCooling && !isNight)
                     heat += growth;
             } else {
-                if (y >= ConfigManager.minDamageHeight) {
+                // Above the damage height, or anywhere under the open sky
+                if (y >= ConfigManager.minDamageHeight || !isUnderCover) {
 
                     float growth = (float) (0.25f + 0.75f * pctNorm);
 

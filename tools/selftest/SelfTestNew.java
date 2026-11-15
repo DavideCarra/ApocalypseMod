@@ -243,6 +243,24 @@ public class SelfTestNew {
                 check("multiplayer: " + n + " gets the phase music", r.has("STOPSOUND") && r.has("SOUND "), r.events.toString());
             }
             SelfTestCommon.log("MP events " + players.get(0).events);
+            // The sun burns at the bottom of a hole open to the sky, however deep: PlayerOne
+            // at y=20 in a shaft open to the sky, PlayerTwo at y=20 in a closed room
+            mpDayBefore = ConfigManager.apocalypseCurrentDay;
+            ConfigManager.apocalypseCurrentDay = 100;
+            heatShaft(level, players.get(0).player, players.get(1).player);
+            stage = 30;
+            waitUntil = tick + 60; // the light down the shaft
+        } else if (stage == 30 && tick >= waitUntil) {
+            heat().put(players.get(0).player.getUUID(), 0f);
+            heat().put(players.get(1).player.getUUID(), 0f);
+            stage = 31;
+            waitUntil = tick + 100;
+        } else if (stage == 31 && tick >= waitUntil) {
+            float open = heat().getOrDefault(players.get(0).player.getUUID(), 0f);
+            float closed = heat().getOrDefault(players.get(1).player.getUUID(), 0f);
+            check("heat: the sun burns at the bottom of a deep shaft open to the sky", open >= 3f && closed == 0f,
+                    "open=" + open + " closed=" + closed + " damageHeight=" + ConfigManager.minDamageHeight);
+            ConfigManager.apocalypseCurrentDay = mpDayBefore;
             // Everybody leaves: the apocalypse waits (pauseWhenEmpty, on by default)
             for (Recorded r : players)
                 SelfTestCommon.server.getPlayerList().remove(r.player);
@@ -277,6 +295,37 @@ public class SelfTestNew {
             defaults();
             SelfTestCommon.log("RESULT fails=" + fails);
             SelfTestCommon.finish();
+        }
+    }
+
+    /** A shaft open to the sky down to y=20 at x=0 z=0 and a closed room at y=20 at x=400. */
+    static void heatShaft(ServerLevel level, net.minecraft.server.level.ServerPlayer open,
+            net.minecraft.server.level.ServerPlayer closed) {
+        int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, 0, 0);
+        for (int y = 19; y < top; y++)
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dz = -1; dz <= 1; dz++) {
+                    boolean inside = dx == 0 && dz == 0 && y >= 20;
+                    level.setBlock(new BlockPos(dx, y, dz), inside ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState(), 2);
+                }
+        open.teleportTo(level, 0.5, 20, 0.5, 0, 0);
+        for (int dx = -2; dx <= 2; dx++)
+            for (int dz = -2; dz <= 2; dz++)
+                for (int dy = -1; dy <= 3; dy++) {
+                    boolean wall = Math.abs(dx) == 2 || Math.abs(dz) == 2 || dy == -1 || dy == 3;
+                    level.setBlock(new BlockPos(400 + dx, 20 + dy, dz), wall ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState(), 2);
+                }
+        closed.teleportTo(level, 400.5, 20, 0.5, 0, 0);
+    }
+
+    @SuppressWarnings("unchecked")
+    static java.util.Map<UUID, Float> heat() {
+        try {
+            java.lang.reflect.Field f = com.creatormc.judgementdaymod.handlers.ApocalypseDamageHandler.class.getDeclaredField("heatLevels");
+            f.setAccessible(true);
+            return (java.util.Map<UUID, Float>) f.get(null);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
         }
     }
 
@@ -931,7 +980,7 @@ public class SelfTestNew {
 
     // ---------------------------------------------------------------- mob sweep
 
-    /** Four cows per chunk: exposed, underground, in water, under a roof. */
+    /** Five cows per chunk: exposed, underground, in water, under a roof, down a shaft open to the sky. */
     // ------------------------------------------------------------------ 1.3.0
 
     static void heightsAfterJump() {
@@ -1214,7 +1263,7 @@ public class SelfTestNew {
             level.getChunk(cx, cz);
             int bx = (cx << 4) + 8, bz = (cz << 4) + 8;
             int top = Math.max(level.getHeight(Heightmap.Types.MOTION_BLOCKING, bx, bz), 70);
-            UUID[] ids = new UUID[4];
+            UUID[] ids = new UUID[5];
             // flat stone platform at top, open sky
             for (int dx = -7; dx <= 7; dx++)
                 for (int dz = -7; dz <= 7; dz++) {
@@ -1245,6 +1294,15 @@ public class SelfTestNew {
                     level.setBlock(roofed.offset(dx, 3, dz), Blocks.STONE.defaultBlockState(), 2);
             ids[3] = spawnCow(level, roofed);
             roofs.add(roofed);
+            // shaft open to the sky down to y=20 (below the damage height): exposed
+            for (int y = 19; y < top; y++)
+                for (int dx = -1; dx <= 1; dx++)
+                    for (int dz = -1; dz <= 1; dz++) {
+                        boolean inside = dx == 0 && dz == 0 && y >= 20;
+                        level.setBlock(new BlockPos(bx - 5 + dx, y, bz + 5 + dz),
+                                inside ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState(), 2);
+                    }
+            ids[4] = spawnCow(level, new BlockPos(bx - 5, 20, bz + 5));
             cows.add(ids);
         }
     }
@@ -1265,6 +1323,8 @@ public class SelfTestNew {
             UUID[] ids = cows.get(c);
             if (level.getEntity(ids[0]) != null)
                 exposedAlive++;
+            if (level.getEntity(ids[4]) != null)
+                exposedAlive++;
             // The pool cow is in the open once its chunk caught up and the pool evaporated:
             // judged again then (1.3.0)
             boolean dry = !level.getBlockState(pools.get(c)).is(Blocks.WATER);
@@ -1279,16 +1339,17 @@ public class SelfTestNew {
                 if (level.getEntity(ids[i]) != null)
                     safeAlive++;
             SelfTestCommon.log("DEBUG set " + c + " alive=" + (level.getEntity(ids[0]) != null) + "," + (level.getEntity(ids[1]) != null)
-                    + "," + (level.getEntity(ids[2]) != null) + "," + (level.getEntity(ids[3]) != null) + " poolDry=" + dry
+                    + "," + (level.getEntity(ids[2]) != null) + "," + (level.getEntity(ids[3]) != null)
+                    + " shaft=" + (level.getEntity(ids[4]) != null) + " poolDry=" + dry
                     + " roofGone=" + roofGone + " roof=" + level.getBlockState(roof.above(3)).getBlock() + "/"
                     + level.getBlockState(roof.above(2)).getBlock() + "/" + level.getBlockState(roof.above()).getBlock()
                     + "/" + level.getBlockState(roof).getBlock());
         }
         String detail = "unload day " + ROUNDS[mobRound][0] + " reload day " + ROUNDS[mobRound][1]
-                + " exposedAlive=" + exposedAlive + "/" + cows.size() + " shelteredAlive=" + safeAlive + "/" + safeExpected
+                + " exposedAlive=" + exposedAlive + "/" + 2 * cows.size() + " shelteredAlive=" + safeAlive + "/" + safeExpected
                 + " dryPools=" + dryPools;
         check("mobs round " + mobRound + (removeExpected ? " exposed removed" : " nobody removed"),
-                (removeExpected ? exposedAlive == 0 : exposedAlive == cows.size()) && safeAlive == safeExpected, detail);
+                (removeExpected ? exposedAlive == 0 : exposedAlive == 2 * cows.size()) && safeAlive == safeExpected, detail);
         // clean up the survivors before the next round
         for (UUID[] ids : cows)
             for (UUID id : ids) {

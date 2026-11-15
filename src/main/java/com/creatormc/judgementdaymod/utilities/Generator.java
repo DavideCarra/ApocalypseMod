@@ -182,6 +182,9 @@ public class Generator {
 
             final LevelChunk chunk = level.getChunk(chunkX, chunkZ);
 
+            // Ores of a chunk an older version generated without them (see OreRetrofit)
+            final float oresWork = OreRetrofit.onSeen(level, chunk) ? OreRetrofit.WORK : 0f;
+
             // Destruction step the world has reached (see stepForDay)
             final int currentStep = currentStep();
 
@@ -206,7 +209,7 @@ public class Generator {
                 if (apocalypseStarted() && meltChecked.add(chunkPos.toLong())) {
                     meltOnly(chunk, level);
                 }
-                return 1f;
+                return 1f + oresWork;
             }
 
             // Steps applied: every one after the saved step (step 0 never applies)
@@ -250,7 +253,7 @@ public class Generator {
             // Mobs judged when the chunk was loaded, before it caught up (e.g. under water
             // that has just evaporated), are judged again once its light is computed
             UnattendedChunkHandler.chunkCaughtUp(level, chunkPos.toLong());
-            return work;
+            return work + oresWork;
 
         } catch (Exception e) {
             System.err.println("[Apocalypse] Error processing chunk: " + e.getMessage());
