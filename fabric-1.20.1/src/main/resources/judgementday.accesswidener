@@ -1,0 +1,20 @@
+accessWidener v2 named
+# Light checks of directly edited blocks, queued as one light engine task per chunk
+accessible class net/minecraft/server/level/ThreadedLevelLightEngine$TaskType
+accessible method net/minecraft/server/level/ThreadedLevelLightEngine addTask (IILnet/minecraft/server/level/ThreadedLevelLightEngine$TaskType;Ljava/lang/Runnable;)V
+accessible field net/minecraft/world/level/lighting/LevelLightEngine blockEngine Lnet/minecraft/world/level/lighting/LightEngine;
+accessible field net/minecraft/world/level/lighting/LevelLightEngine skyEngine Lnet/minecraft/world/level/lighting/LightEngine;
+# Changes already queued for broadcast, dropped when a chunk is sent again whole (ChunkLightSync)
+accessible method net/minecraft/server/level/ChunkMap getVisibleChunkIfPresent (J)Lnet/minecraft/server/level/ChunkHolder;
+accessible field net/minecraft/server/level/ChunkHolder skyChangedLightSectionFilter Ljava/util/BitSet;
+accessible field net/minecraft/server/level/ChunkHolder blockChangedLightSectionFilter Ljava/util/BitSet;
+accessible field net/minecraft/server/level/ChunkHolder hasChangedSections Z
+accessible field net/minecraft/server/level/ChunkHolder changedBlocksPerSection [Lit/unimi/dsi/fastutil/shorts/ShortSet;
+# Falling ash of a catch up created after its column (Generator.landFalls), without the block change of FallingBlockEntity.fall
+accessible method net/minecraft/world/entity/item/FallingBlockEntity <init> (Lnet/minecraft/world/level/Level;DDDLnet/minecraft/world/level/block/state/BlockState;)V
+# Neighbour light spill bookkeeping run behind the light change notifications (ChunkLightSync)
+accessible class net/minecraft/server/level/ServerChunkCache$MainThreadExecutor
+accessible field net/minecraft/server/level/ServerChunkCache mainThreadProcessor Lnet/minecraft/server/level/ServerChunkCache$MainThreadExecutor;
+# Flammability of a block, as Forge's default getFlammability and getFireSpreadSpeed read it (Analyzer)
+accessible method net/minecraft/world/level/block/FireBlock getBurnOdds (Lnet/minecraft/world/level/block/state/BlockState;)I
+accessible method net/minecraft/world/level/block/FireBlock getIgniteOdds (Lnet/minecraft/world/level/block/state/BlockState;)I

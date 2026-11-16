@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "Transforms the Minecraft world into an apocalyptic wasteland.\nEach day brings new environmental decay and dangers.",
+  "authors": ["CreatorMC"],
+  "contributors": [],
+  "contact": {
+    "issues": "https://github.com/creatormc/judgementdaymod/issues"
+  },
+  "license": "${mod_license}",
+  "icon": "assets/judgementday/textures/item/heart_of_oblivion.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.creatormc.judgementdaymod.setup.JudgementDayMod"],
+    "client": ["com.creatormc.judgementdaymod.setup.ClientSetup"]
+  },
+  "mixins": ["judgementday.mixins.json"],
+  "accessWidener": "judgementday.accesswidener",
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "fabric-api": "*",
+    "minecraft": "~1.20.1",
+    "java": ">=17"
+  }
+}
