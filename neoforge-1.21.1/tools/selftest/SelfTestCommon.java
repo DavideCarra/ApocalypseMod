@@ -74,6 +74,10 @@ public class SelfTestCommon {
         return props.getProperty("scenario");
     }
 
+    static Path gameDir() {
+        return FMLPaths.GAMEDIR.get();
+    }
+
     // Falling block entities created during the run
     static int fallingJoined;
     static final java.util.Map<String, Integer> fallingTypes = new java.util.TreeMap<>();
@@ -101,6 +105,9 @@ public class SelfTestCommon {
             return;
         server = event.getServer();
         log("START scenario=" + scenario());
+        // Single player: once for every world opened in the game session
+        if (scenario().equals("single"))
+            SelfTestSingle.started();
     }
 
     @SubscribeEvent(priority = net.neoforged.bus.api.EventPriority.HIGH)
@@ -115,6 +122,8 @@ public class SelfTestCommon {
                 compareTick();
             } else if (scenario().equals("generate")) {
                 generateTick();
+            } else if (scenario().equals("single")) {
+                SelfTestSingle.tick();
             } else if (scenario().equals("worldgen")) {
                 worldgenTick();
             } else if (scenario().equals("retrofit")) {
