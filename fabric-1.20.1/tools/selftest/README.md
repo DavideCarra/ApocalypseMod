@@ -85,6 +85,18 @@ Scenarios:
   after days skipped by hand, snow and ice melting, no fire after the end).
   Prints PASS/FAIL lines and `RESULT fails=N`.
 
+Comparing with the Forge version (same Minecraft version): `canonical=true` hashes block
+states by name and properties in the dumps (the internal ids depend on the mods' registration
+order), `settleTicks=200` lets the world run that long before the processing, `dumpBefore=true`
+dumps the regions just before the processing too (`BEFORE` lines: the input must be the same).
+Run the same scenario on the same world with both versions and compare the sections whose
+`BEFORE` lines are the same.
+
+On Fabric the harness is started by the mod's initializer when it is built in
+(`SelfTestCommon.init`, found by name: release jars never have it), and its listeners run
+before or after the mod's own through Fabric event phases, as Forge's priorities ordered them.
+The `logic` scenario also checks that every mixin injection of the mod is applied.
+
 Every run ends with `FALLING joined=N`, the falling block entities created.
 
 `ClientProbe.java` is for the dev client (`gradlew runClient`, copy it into the

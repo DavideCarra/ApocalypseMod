@@ -18,7 +18,6 @@ loom {
     // Opens the members of the light engine and the chunk holders used by the mod (as the
     // access transformer of the Forge version)
     accessWidenerPath = file('src/main/resources/judgementday.accesswidener')
-    mixin.defaultRefmapName = 'judgementday.refmap.json'
 
     runs {
         configureEach {
