@@ -891,6 +891,12 @@ public class SelfTestCommon {
     static void handlePacket(Object msg) {
         if (!(msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket))
             countPacket(msg);
+        // Since 1.20.2 chunks are sent in batches the client acknowledges, which paces the
+        // next ones: acknowledged at once, at the fastest rate the server accepts (a fast
+        // client), so the player gets its chunks as it got them all at once in 1.20.1
+        if (msg instanceof net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket && fakePlayer != null)
+            fakePlayer.connection.handleChunkBatchReceived(
+                    new net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket(64f));
         if (msg instanceof net.minecraft.network.protocol.game.ClientboundBundlePacket bundle) {
             for (Object sub : bundle.subPackets())
                 handlePacket(sub);

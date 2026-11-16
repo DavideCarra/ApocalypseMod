@@ -23,6 +23,9 @@ neoForge {
     runs {
         client {
             client()
+            // Extra arguments of the dev client, e.g. -PclientArgs="--quickPlayMultiplayer localhost:25565"
+            if (project.hasProperty('clientArgs'))
+                programArguments.addAll(project.property('clientArgs').toString().split(' '))
         }
         server {
             server()
