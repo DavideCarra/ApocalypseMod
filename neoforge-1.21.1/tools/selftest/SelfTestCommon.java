@@ -1035,8 +1035,12 @@ public class SelfTestCommon {
                     }
             }
             stage = 1;
-            waitUntil = tick + 2;
+            // Ticks the world runs before the processing (settleTicks): the scheduled ticks
+            // saved with the chunks run meanwhile, as soon as their entities are loaded
+            waitUntil = tick + Integer.parseInt(props.getProperty("settleTicks", "2"));
         } else if (stage == 1 && tick >= waitUntil) {
+            if ("true".equals(props.getProperty("dumpBefore")))
+                dumpRegions(level, "BEFORE");
             configure();
             ApocalypseChunkData data = ApocalypseChunkData.get(level);
             int savedPhase = Integer.parseInt(props.getProperty("savedPhase", "4"));
@@ -1221,9 +1225,26 @@ public class SelfTestCommon {
         log("TICKS " + all.size());
     }
 
+    // Ids of block states that do not depend on the Minecraft version (canonical=true): the
+    // hash of the state's name and properties, with the blocks renamed since 1.20.1 under
+    // their new name. Lets the dumps of two versions be compared
+    static final java.util.IdentityHashMap<BlockState, Integer> CANONICAL = new java.util.IdentityHashMap<>();
+
+    static int blockId(BlockState state, boolean canonical) {
+        if (!canonical)
+            return Block.getId(state);
+        Integer id = CANONICAL.get(state);
+        if (id == null) {
+            id = state.toString().replace("Block{minecraft:grass}", "Block{minecraft:short_grass}").hashCode();
+            CANONICAL.put(state, id);
+        }
+        return id;
+    }
+
     static void dumpRegions(ServerLevel level, String tag) {
         final boolean fireAsAir = "true".equals(props.getProperty("hashFireAsAir"));
-        final int airId = Block.getId(Blocks.AIR.defaultBlockState());
+        final boolean canonical = "true".equals(props.getProperty("canonical"));
+        final int airId = blockId(Blocks.AIR.defaultBlockState(), canonical);
         long total = 0;
         for (int[] r : regions) {
             for (int x = r[0] - 3; x <= r[0] + 3; x++) {
@@ -1238,7 +1259,7 @@ public class SelfTestCommon {
                             for (int lz = 0; lz < 16; lz++)
                                 for (int lx = 0; lx < 16; lx++) {
                                     BlockState bs = sec.getBlockState(lx, ly, lz);
-                                    int id = fireAsAir && bs.is(Blocks.FIRE) ? airId : Block.getId(bs);
+                                    int id = fireAsAir && bs.is(Blocks.FIRE) ? airId : blockId(bs, canonical);
                                     h = (h ^ id) * 1099511628211L;
                                     h = (h ^ (lx | lz << 4 | ly << 8)) * 1099511628211L;
                                 }
@@ -1262,7 +1283,7 @@ public class SelfTestCommon {
             AABB box = new AABB((r[0] - 3) << 4, -64, (r[1] - 3) << 4, (r[0] + 4) << 4, 320, (r[1] + 4) << 4);
             List<String> falling = new ArrayList<>();
             for (FallingBlockEntity e : level.getEntities(EntityType.FALLING_BLOCK, box, e -> true))
-                falling.add(e.blockPosition().toShortString() + "=" + Block.getId(e.getBlockState()));
+                falling.add(e.blockPosition().toShortString() + "=" + blockId(e.getBlockState(), canonical));
             falling.sort(null);
             log(tag + " FALLING " + r[0] + " " + r[1] + " " + falling);
         }

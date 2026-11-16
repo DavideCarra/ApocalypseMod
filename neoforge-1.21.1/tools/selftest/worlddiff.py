@@ -261,6 +261,9 @@ def main():
         for y in sorted(set(ba) | set(bb)):
             sa = ba.get(y) or ["minecraft:air"] * 4096
             sb = bb.get(y) or ["minecraft:air"] * 4096
+            if sa == sb:
+                total_blocks += 4096
+                continue
             for idx in range(4096):
                 if sa[idx] != sb[idx]:
                     n += 1
