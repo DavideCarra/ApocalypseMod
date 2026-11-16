@@ -114,7 +114,7 @@ compare what the server has with what the client really has and draws. `runsingl
 prepares everything and starts the game straight into the world:
 
 ```
-tools/selftest/runsingle.py <project_dir> <base_world_dir> <out_dir> [--harness DIR] [--display :99] [--timeout SECONDS]
+tools/selftest/runsingle.py <project_dir> <base_world_dir> <out_dir> [--harness DIR] [--args-format FORMAT] [--display :99] [--timeout SECONDS]
 ```
 
 `<base_world_dir>` is a world saved by a dedicated server of the mod (for a comparison between
@@ -153,3 +153,61 @@ the numbers between versions; they change from one run to the next.
 
 The `HEAT ... joining the second world` line is the heat the server still has for the player
 from the first world (the heat is kept by player id for the whole game session).
+
+## The Forge version as the reference (`forge-reference/`)
+
+The Forge 1.20.1 project is not changed for these comparisons. `forge-reference/` holds the two
+harness files of the Forge version that differ from the ones in its `tools/selftest`:
+`SelfTestCommon.java` (the options `canonical`, `settleTicks` and `dumpBefore`, the `single`
+scenario) and `SelfTestClient.java`. For a dedicated server scenario, copy the Forge project's
+`tools/selftest` somewhere, put `SelfTestCommon.java` in the copy and use the `runtest.sh` of
+the copy. For the single player scenario:
+
+```
+tools/selftest/runsingle.py <forge_project_dir> <base_world_dir> <out_dir> --harness tools/selftest/forge-reference --args-format=--args=%s
+```
+
+## Real servers and real clients (`real/`)
+
+The scripts of `real/` compare the loaders on what the harness cannot fake: production servers
+(the release jars, no harness in them) driven through RCON, and real clients (the dev clients)
+that join them, with real mouse clicks and keys (xdotool) and screenshots. `real/realenv.py`
+lists the environment variables that say where the three servers and projects are; the Forge
+version is the reference, run with the same scripts. One test at a time.
+
+- `moved_world.py`: a world with mobs moved between loaders. `create:<loader>:<day>:<name>[:seen]`
+  builds a pen in a forced chunk with a mob for every case of the unattended areas (in the
+  open, under a roof, glass or leaves, in water, in a waterlogged block, villager, cat, baby,
+  fire immune, fire resistant, invulnerable, mount and rider, armor stand, closed room, bottom
+  of a shaft open to the sky, deep underground), two ash blocks and a chest with the mod's
+  items, and stops the server (every mob is saved with the day). With `seen` a real client
+  looks at the place first, so that the chunk is saved with the steps of that day.
+  `strip:<name>:<new>` makes the control world, without the stamps (as saved by a version that
+  had none).
+  `reload:<loader>:<name>:<day>:<label>[:<end day>]` opens a copy on a loader on a later day
+  and prints who is left, by tag and UUID, in the running server and in the saved files, the
+  stamps written back, the blocks and the chest. The same line must come out of every loader:
+  the mobs in the open are removed when at least one full day of apocalypse lies between the
+  stamp and today (and before the end day), nobody otherwise; without stamps the saved step of
+  the chunk decides.
+- `player_returns.py <loader>:<name>:<day>:<label>[:near]`: the same worlds without their
+  forced chunk. A real client joins and watches the pen from afar (`near`: stands on it): the
+  mobs come back from disk, the chunk catches up under the player's eyes and the survivors are
+  judged again. Who is left is sampled every second for 75 seconds (`at_load`, `timeline`), and
+  the columns of the pen are read from the saved world at the end. The steps a chunk missed are
+  applied to a random share of its columns, so the shelter of a mob holds or not from one run
+  to the next, on every loader; only the step of a day at or past the peak (100%) is always the
+  same. For a line that must be equal on every loader: `create:forge:45:<name>:seen`, then
+  `<loader>:<name>:52:<label>`. For the days in between compare several runs: the mobs in the
+  open, in water and in waterlogged blocks are always removed, the fire immune ones, the riders
+  and the ones underground never.
+- `real_clicks.py`: `base` generates a world, `<loader>:<day>` runs the click sequence on it
+  (day 30: survival, 60%; day 60: creative, after the peak), `compare` prints the results of the
+  loaders row by row. Every click is a real right click of the client, aimed with tp: a block
+  placed (the aim works); water, powder snow and fish buckets evaporating above the water
+  height, a lava bucket not, a water bucket in the off hand, water poured below the height;
+  the first ritual with a pattern without its egg, on another block of the pattern, with a
+  left click, complete, sneaking, with a block in hand, as a spectator; the second ritual on
+  stone, with the heart in the off hand, on grass (config, title screenshot), a bucket after
+  the end, the ritual again. It runs without random ticks: with them a grass block with water
+  above turns to dirt at a random moment (the last two rows show that on every loader).
