@@ -68,6 +68,10 @@ public class SelfTestCommon {
         return props.getProperty("scenario");
     }
 
+    static Path gameDir() {
+        return net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir();
+    }
+
     // Falling block entities created during the run
     // Forge's listener priorities, as Fabric event phases: before and after the mod's listeners
     static final net.minecraft.resources.ResourceLocation EARLY = new net.minecraft.resources.ResourceLocation("judgementday", "selftest_early");
@@ -121,6 +125,9 @@ public class SelfTestCommon {
             return;
         server = startedServer;
         log("START scenario=" + scenario());
+        // Single player: once for every world opened in the game session
+        if (scenario().equals("single"))
+            SelfTestSingle.started();
     }
 
     public static void onTick(net.minecraft.server.MinecraftServer ticked) {
@@ -134,6 +141,8 @@ public class SelfTestCommon {
                 compareTick();
             } else if (scenario().equals("generate")) {
                 generateTick();
+            } else if (scenario().equals("single")) {
+                SelfTestSingle.tick();
             } else if (scenario().equals("worldgen")) {
                 worldgenTick();
             } else if (scenario().equals("retrofit")) {
