@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Runs the single player self test (scenario=single, see README.md) in the dev client.
 
-usage: runsingle.py <project_dir> <base_world_dir> <out_dir> [--harness DIR] [--display :99]
-                    [--timeout SECONDS]
+usage: runsingle.py <project_dir> <base_world_dir> <out_dir> [--harness DIR] [--args-format FORMAT]
+                    [--display :99] [--timeout SECONDS]
+
+--harness: a folder whose harness files are used first (for another loader's project: the files
+missing there are taken from that project's own tools/selftest, then from this folder).
+--args-format: how the project's runClient task takes the game arguments, if not as this one.
 
 Copies the harness into the project (its selftest folder must be ignored by git), copies the
 base world twice into run/saves, starts the dev client on the X display straight into the
@@ -61,10 +65,20 @@ class Display:
     def __init__(self, name):
         self.env = dict(os.environ, DISPLAY=name)
         self.name = name
-        if self.xdo('getdisplaygeometry').returncode != 0:
-            subprocess.Popen(['Xvfb', name, '-screen', '0', '1280x720x24'], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
-            time.sleep(2)
+        if self.xdo('getdisplaygeometry').returncode == 0:
+            return
+        # Nothing answers: the lock of a display that is gone (a reboot) would keep Xvfb from starting
+        number = name.lstrip(':').split('.')[0]
+        for stale in ('/tmp/.X%s-lock' % number, '/tmp/.X11-unix/X%s' % number):
+            if os.path.exists(stale):
+                os.remove(stale)
+        subprocess.Popen(['Xvfb', name, '-screen', '0', '1280x720x24'], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        for _ in range(40):
+            time.sleep(0.5)
+            if self.xdo('getdisplaygeometry').returncode == 0:
+                return
+        raise RuntimeError('no X server on display ' + name)
 
     def xdo(self, *args):
         return subprocess.run(['xdotool'] + [str(a) for a in args], env=self.env, capture_output=True, text=True)
@@ -119,8 +133,13 @@ def stop_game(project):
 def prepare(project, base, harness):
     dst = os.path.join(project, 'src/main/java/com/creatormc/judgementdaymod/selftest')
     os.makedirs(dst, exist_ok=True)
+    here = os.path.dirname(os.path.abspath(__file__))
     for f in HARNESS_FILES:
-        shutil.copy(os.path.join(harness, f), os.path.join(dst, f))
+        # The given folder first, then the project's own harness, then this one
+        for folder in (harness, os.path.join(project, 'tools', 'selftest'), here):
+            if folder and os.path.exists(os.path.join(folder, f)):
+                shutil.copy(os.path.join(folder, f), os.path.join(dst, f))
+                break
     run = os.path.join(project, 'run')
     os.makedirs(os.path.join(run, 'saves'), exist_ok=True)
     for world, values in WORLDS.items():
@@ -148,7 +167,8 @@ def main():
     ap.add_argument('project')
     ap.add_argument('base_world')
     ap.add_argument('out')
-    ap.add_argument('--harness', default=os.path.dirname(os.path.abspath(__file__)))
+    ap.add_argument('--harness', default=None)
+    ap.add_argument('--args-format', default=CLIENT_ARGS)
     ap.add_argument('--display', default=':99')
     ap.add_argument('--timeout', type=int, default=2400)
     a = ap.parse_args()
@@ -162,7 +182,7 @@ def main():
     display = Display(a.display)
 
     gradle = ['bash', 'gradlew', 'runClient'] + os.environ.get('GRADLE_ARGS', '').split()
-    gradle.append(CLIENT_ARGS % '--quickPlaySingleplayer sptest --username Tester')
+    gradle.append(a.args_format % '--quickPlaySingleplayer sptest --username Tester')
     log = open(os.path.join(out, 'gradle.log'), 'w')
     proc = subprocess.Popen(gradle, cwd=project, env=display.env, stdout=log, stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL, start_new_session=True)

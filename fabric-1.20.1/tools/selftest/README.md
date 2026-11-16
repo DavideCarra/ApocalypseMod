@@ -116,7 +116,7 @@ compare what the server has with what the client really has and draws. `runsingl
 prepares everything and starts the game straight into the world:
 
 ```
-tools/selftest/runsingle.py <project_dir> <base_world_dir> <out_dir> [--harness DIR] [--display :99] [--timeout SECONDS]
+tools/selftest/runsingle.py <project_dir> <base_world_dir> <out_dir> [--harness DIR] [--args-format FORMAT] [--display :99] [--timeout SECONDS]
 ```
 
 `<base_world_dir>` is a world saved by a dedicated server of the mod (for a comparison between
