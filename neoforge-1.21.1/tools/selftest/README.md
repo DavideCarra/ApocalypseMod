@@ -142,17 +142,21 @@ What it checks (PASS/FAIL lines, `RESULT1` for the first world and `RESULT` at t
   first one), the client has its state, a water bucket evaporates at 56% (real click, the
   client has no water and an empty bucket), the worlds are compared; then the game is quit.
 
-The light of the two worlds is compared too, value by value, and reported in the `LIGHT`
-lines without a PASS or FAIL: `differ` values are not the same, `insideSolidBlocks` of them are
-inside blocks that hide their own light, `seen` are the others (how many brighter on the
-client, the largest difference, how many by each difference, in which blocks). It is not
-always 0 where chunks were processed under the client's eyes: seen so far are values one level
-apart under water after an evaporation or next to flowing lava, and fires that glow on the
-client only (the fires lit by the processing do not glow on the server, by design). Compare
-the numbers between versions; they change from one run to the next.
+The light of the two worlds is compared too, value by value, once the mod's light work is over
+(chunks waiting to be sent again, spills and follow-ups), and reported in the `LIGHT` lines:
+`differ` values are not the same, `insideSolidBlocks` of them are inside blocks that hide their
+own light, `seen` are the others (how many brighter on the client, the largest difference, how
+many by each difference, in which blocks). The fires lit by the processing do not glow (by
+design), on the client either since 1.3.5: the client must have no block light value higher
+than the server's (`no glow on the client ...`; 1.3.4 had thousands in the second world). The
+rest is not checked: the client relights the blocks it gets by itself, and its light can be a
+level off here and there even where the mod sent no light at all (at login, next to lava in
+caves: 0 to 57 values in repeated runs). After the phase change processed under the client's
+eyes 1.3.4 had about 3200 sky light values off under water, 1.3.5 0 to about 100. Compare the
+numbers between versions; they change from one run to the next.
 
-The `HEAT ... joining the second world` line is the heat the server still has for the player
-from the first world (the heat is kept by player id for the whole game session).
+Since 1.3.5 the second world starts without the heat of the first one (`HEAT ... joining the
+second world`: none); 1.3.4 kept it by player id for the whole game session.
 
 ## The Forge version as the reference (`forge-reference/`)
 

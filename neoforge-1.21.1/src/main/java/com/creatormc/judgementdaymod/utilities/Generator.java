@@ -25,6 +25,8 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.MinecraftServer;
@@ -1471,15 +1473,25 @@ public class Generator {
         // Packet to "forget" the chunk before resending
         ClientboundForgetLevelChunkPacket forget = new ClientboundForgetLevelChunkPacket(chunkPos);
 
+        // Both in one bundle: the client handles them in the same frame, so it never relights
+        // the chunks around while this one is gone (they would keep the light it lacks then)
+        final List<Packet<? super ClientGamePacketListener>> packets = new java.util.ArrayList<>();
+        packets.add(forget);
+        if (packet instanceof ClientboundBundlePacket bundle) {
+            for (Packet<? super ClientGamePacketListener> inner : bundle.subPackets())
+                packets.add(inner);
+        } else {
+            @SuppressWarnings("unchecked")
+            final Packet<? super ClientGamePacketListener> single = (Packet<? super ClientGamePacketListener>) packet;
+            packets.add(single);
+        }
+        final ClientboundBundlePacket resend = new ClientboundBundlePacket(packets);
+
         for (ServerPlayer viewer : level.players()) {
-            // Send only to players currently viewing this chunk
+            // Send only to players currently viewing this chunk: the client forgets the chunk,
+            // then gets it again
             if (viewers.contains(viewer)) {
-                // Force client to forget chunk
-                viewer.connection.send(forget);
-                // Resend once the current tick is over, after the forget packet
-                level.getServer().execute(() -> {
-                    viewer.connection.send(packet);
-                });
+                viewer.connection.send(resend);
             }
         }
         // The light still being computed reaches them too
