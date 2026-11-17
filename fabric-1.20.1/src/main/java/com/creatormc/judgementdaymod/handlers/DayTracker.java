@@ -195,6 +195,7 @@ public class DayTracker {
         OreRetrofit.clear();
         Generator.clearPendingFalls();
         Generator.resetState();
+        ApocalypseDamageHandler.clear();
     }
 
     public static void onServerStopped(MinecraftServer server) {
@@ -208,6 +209,7 @@ public class DayTracker {
         LightChecks.clear();
         OreRetrofit.clear();
         Generator.clearPendingFalls();
+        ApocalypseDamageHandler.clear();
     }
 
     public static void enqueueChunk(ChunkToProcess c) {

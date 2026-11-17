@@ -40,6 +40,8 @@ public final class LightChecks {
     private static ServerLevel batchLevel;
     private static long batchChunk;
     private static final LongArrayList markerChunks = new LongArrayList();
+    // Chunks sent again whole waiting for the light computed after it (see ChunkLightSync.followUp)
+    private static final LongArrayList followUpChunks = new LongArrayList();
     private static int depth;
 
     // Set if the light engine could not be used directly: per block vanilla checks
@@ -124,11 +126,27 @@ public final class LightChecks {
     }
 
     /**
+     * Runs ChunkLightSync.followUpsDone, through the server thread, once the light engine
+     * has computed every check queued before it (vanilla's included).
+     */
+    static void afterLightFollowUp(ServerLevel level, int chunkX, int chunkZ) {
+        if (batchLevel != level) {
+            flush();
+            batchLevel = level;
+            batchChunk = ChunkPos.asLong(chunkX, chunkZ);
+        }
+        followUpChunks.add(ChunkPos.asLong(chunkX, chunkZ));
+        if (depth == 0) {
+            flush();
+        }
+    }
+
+    /**
      * Queues the collected checks, then the marker of the chunks waiting for them.
      */
     private static void flush() {
         final ServerLevel level = batchLevel;
-        if (level == null || (bothCount == 0 && skyOnlyCount == 0 && markerChunks.isEmpty())) {
+        if (level == null || (bothCount == 0 && skyOnlyCount == 0 && markerChunks.isEmpty() && followUpChunks.isEmpty())) {
             return;
         }
         final ThreadedLevelLightEngine engine = level.getChunkSource().getLightEngine();
@@ -137,6 +155,7 @@ public final class LightChecks {
         final long[] bothList = Arrays.copyOf(both, bothCount);
         final long[] skyList = Arrays.copyOf(skyOnly, skyOnlyCount);
         final long[] markers = markerChunks.toLongArray();
+        final long[] followUps = followUpChunks.toLongArray();
         bothCount = 0;
         skyOnlyCount = 0;
         // Do not keep the room of an exceptionally big batch (an ocean evaporating)
@@ -145,6 +164,7 @@ public final class LightChecks {
         if (skyOnly.length > 65536)
             skyOnly = new long[1024];
         markerChunks.clear();
+        followUpChunks.clear();
         batchLevel = null;
 
         if (!unavailable) {
@@ -187,6 +207,12 @@ public final class LightChecks {
                             () -> server.tell(new TickTask(server.getTickCount(),
                                     () -> ChunkLightSync.markersDone(level, markers))));
                 }
+                if (followUps.length > 0) {
+                    final MinecraftServer server = level.getServer();
+                    engine.addTask(x, z, ThreadedLevelLightEngine.TaskType.POST_UPDATE,
+                            () -> server.tell(new TickTask(server.getTickCount(),
+                                    () -> ChunkLightSync.followUpsDone(level, followUps))));
+                }
                 return;
             } catch (LinkageError e) {
                 unavailable = true;
@@ -201,6 +227,7 @@ public final class LightChecks {
             engine.checkBlock(pos.set(p));
         }
         ChunkLightSync.markersLost(level, markers);
+        ChunkLightSync.followUpsDone(level, followUps);
     }
 
     /**
@@ -210,6 +237,7 @@ public final class LightChecks {
         bothCount = 0;
         skyOnlyCount = 0;
         markerChunks.clear();
+        followUpChunks.clear();
         batchLevel = null;
         depth = 0;
     }
