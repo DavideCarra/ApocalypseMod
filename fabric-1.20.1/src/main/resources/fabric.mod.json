@@ -3,7 +3,7 @@
   "id": "${mod_id}",
   "version": "${mod_version}",
   "name": "${mod_name}",
-  "description": "Transforms the Minecraft world into an apocalyptic wasteland.\nEach day brings new environmental decay and dangers.",
+  "description": "Transforms the Minecraft world into an apocalyptic wasteland. Each day brings new environmental decay and dangers.",
   "authors": ["CreatorMC"],
   "contributors": [],
   "contact": {
