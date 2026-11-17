@@ -67,6 +67,7 @@ public class SelfTestClient {
     static volatile String afterQuitState;
     static volatile float afterQuitHeat;
     static volatile String afterQuitLevel;
+    static volatile String afterQuitTitle;
 
     static synchronized void register() {
         if (registered)
@@ -122,6 +123,18 @@ public class SelfTestClient {
         boolean same = shown != null && sub != null && shown.equals(phase.getTitleComponent())
                 && sub.equals(phase.getDescriptionComponent());
         return same ? "same '" + got + "'" : "different: shown '" + got + "' expected '" + want + "'";
+    }
+
+    /** The title of a phase the client has on screen ("nothing" if none). */
+    static String shownTitle() {
+        try {
+            Field f = PhaseTitleOverlay.class.getDeclaredField("currentTitle");
+            f.setAccessible(true);
+            Component shown = (Component) f.get(null);
+            return shown == null ? "nothing" : shown.getString();
+        } catch (ReflectiveOperationException e) {
+            return e.toString();
+        }
     }
 
     static boolean alive() throws Exception {
@@ -295,6 +308,7 @@ public class SelfTestClient {
             afterQuitState = state();
             afterQuitHeat = heat();
             afterQuitLevel = mc.level == null && mc.player == null ? "gone" : "still there";
+            afterQuitTitle = shownTitle();
             switchStage = 1;
             switchTicks = 0;
         } else if (switchTicks >= 40) {

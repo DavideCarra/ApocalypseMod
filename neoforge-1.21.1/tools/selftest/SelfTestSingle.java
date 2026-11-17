@@ -12,6 +12,8 @@ import java.util.UUID;
 
 import com.creatormc.judgementdaymod.handlers.ApocalypseDamageHandler;
 import com.creatormc.judgementdaymod.handlers.DayTracker;
+import com.creatormc.judgementdaymod.handlers.NetworkHandler;
+import com.creatormc.judgementdaymod.models.PhaseTitlePacket;
 import com.creatormc.judgementdaymod.setup.ApocalypseChunkGenerator;
 import com.creatormc.judgementdaymod.setup.ModBlocks;
 import com.creatormc.judgementdaymod.setup.ModItems;
@@ -81,6 +83,8 @@ public class SelfTestSingle {
 
     static int dayBefore;
     static int quietTicks;
+    // The player of the first world (the heat of the second one starts without them, 1.3.5)
+    static UUID firstPlayer;
 
     // The arena: a stone floor in the air (the player stands at y 150), far from the spawn
     static final int AX = 1000, AY = 150, AZ = 1000;
@@ -94,6 +98,16 @@ public class SelfTestSingle {
         stepStart = 0;
         SelfTestCommon.log("SESSION " + session);
         SelfTestClient.register();
+        if (session == 2) {
+            // Before anybody joins: nothing of the first world is left on the server (1.3.5)
+            try {
+                check("sp: the second world starts without the heat of the first one",
+                        firstPlayer != null && heatOf(firstPlayer) == null,
+                        "heat=" + (firstPlayer == null ? "player unknown" : heatWord(heatOf(firstPlayer) == null ? -1f : heatOf(firstPlayer))));
+            } catch (Exception e) {
+                check("sp: the second world starts without the heat of the first one", false, e.toString());
+            }
+        }
         if (session == 1)
             firstWorld();
         else
@@ -116,6 +130,8 @@ public class SelfTestSingle {
             // The player is another object after a respawn
             player = players.get(0);
             name = player.getGameProfile().getName();
+            if (session == 1)
+                firstPlayer = player.getUUID();
             if (at >= steps.size()) {
                 end(false);
                 return;
@@ -225,9 +241,10 @@ public class SelfTestSingle {
             String[] parts = r.compare == null ? new String[] { "no comparison", "" } : r.compare.split("\n");
             check("sp: the real client has the server's blocks (" + where + ")", r.compare != null
                     && parts[0].contains(" missing=0 ") && parts[0].endsWith(" blockDiffs=0"), parts[0]);
-            // The light is reported, not checked: after a chunk was processed under the client's eyes the
-            // client can keep light values the server no longer has (compare the numbers between versions)
-            log("LIGHT " + where + ": lightQuiet=" + r.lightQuiet + " " + parts[1]);
+            // Every sky and block light value too, inside blocks included (1.3.5)
+            check("sp: the real client has the server's light (" + where + ")", r.compare != null && r.lightQuiet
+                    && parts[1].startsWith("sky: differ=0 ") && parts[1].contains(" | blockLight: differ=0 "),
+                    "lightQuiet=" + r.lightQuiet + " " + parts[1]);
             return true;
         });
         waitTicks(20);
@@ -414,6 +431,8 @@ public class SelfTestSingle {
         sameState("at login the client has the server's state");
         now(() -> log("HUD at login " + SelfTestClient.hud()));
         shot("0_login");
+        // The light before the apocalypse changes anything (day 9: nothing to transform)
+        compare("at login");
 
         // --- a new day by the clock: dawn comes in a second
         now(() -> {
@@ -567,6 +586,10 @@ public class SelfTestSingle {
         compare("at the arena after the rituals");
         now(() -> log("HEAT at the end of the first world: server " + heatWord(heat()) + ", client "
                 + heatWord(SelfTestClient.heat())));
+        // The world is left while a phase title is on screen: it is not shown in the next one (1.3.5)
+        now(() -> NetworkHandler.sendToAll(new PhaseTitlePacket(Phase.PHASE_END)));
+        expect("a title is on screen when leaving the world", () -> SelfTestClient.title(Phase.PHASE_END).startsWith("same "),
+                40, () -> SelfTestClient.title(Phase.PHASE_END));
     }
 
     // ---------------------------------------------------------------- second world
@@ -583,9 +606,10 @@ public class SelfTestSingle {
         waitTicks(160);
         now(() -> {
             check("sp: leaving the world resets what the client draws", reset.equals(SelfTestClient.afterQuitState)
-                    && SelfTestClient.afterQuitHeat == 0f && "gone".equals(SelfTestClient.afterQuitLevel),
+                    && SelfTestClient.afterQuitHeat == 0f && "gone".equals(SelfTestClient.afterQuitLevel)
+                    && "nothing".equals(SelfTestClient.afterQuitTitle),
                     "client[" + SelfTestClient.afterQuitState + "] heat=" + SelfTestClient.afterQuitHeat + " level="
-                            + SelfTestClient.afterQuitLevel);
+                            + SelfTestClient.afterQuitLevel + " title=" + SelfTestClient.afterQuitTitle);
             check("sp: the second world has its own config", ConfigManager.apocalypseCurrentDay == day2
                     && ConfigManager.apocalypseMaxDays == max2 && ConfigManager.apocalypseEndDay == 200
                     && ConfigManager.lastApocalypseStep == ConfigManager.UNSET,
@@ -715,6 +739,33 @@ public class SelfTestSingle {
                         }
             }
         }
+        // The first columns with a sky light that differs where it can be seen: what is above, both sides
+        StringBuilder columns = new StringBuilder();
+        int columnsShown = 0;
+        for (String sample : samples) {
+            if (!sample.startsWith("sky ") || columnsShown >= 3)
+                continue;
+            String[] xyz = sample.substring(4, sample.indexOf(" server=")).split(", ");
+            int x = Integer.parseInt(xyz[0]), y0 = Integer.parseInt(xyz[1]), z = Integer.parseInt(xyz[2]);
+            LevelChunk sc = sl.getChunkSource().getChunkNow(x >> 4, z >> 4);
+            LevelChunk cc = cl.getChunkSource().getChunkNow(x >> 4, z >> 4);
+            columns.append(" | COLUMN ").append(x).append(',').append(z).append(" lowestSource server=")
+                    .append(sc.getSkyLightSources().getLowestSourceY(x & 15, z & 15)).append(" client=")
+                    .append(cc.getSkyLightSources().getLowestSourceY(x & 15, z & 15)).append(':');
+            for (int y = y0 - 1; y <= y0 + 10; y++) {
+                pos.set(x, y, z);
+                columns.append(' ').append(y).append('=')
+                        .append(net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(sl.getBlockState(pos).getBlock()).getPath())
+                        .append('/').append(sl.getBrightness(LightLayer.SKY, pos)).append('/').append(cl.getBrightness(LightLayer.SKY, pos));
+            }
+            for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) {
+                pos.set(x + d[0], y0, z + d[1]);
+                columns.append(" n").append(d[0]).append(d[1]).append('=')
+                        .append(net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(sl.getBlockState(pos).getBlock()).getPath())
+                        .append('/').append(sl.getBrightness(LightLayer.SKY, pos)).append('/').append(cl.getBrightness(LightLayer.SKY, pos));
+            }
+            columnsShown++;
+        }
         StringBuilder light = new StringBuilder();
         for (int l = 0; l < 2; l++) {
             light.append(l == 0 ? "sky: " : " | blockLight: ").append("differ=").append(diffs[l]).append(" insideSolidBlocks=")
@@ -727,7 +778,7 @@ public class SelfTestSingle {
                 light.append(')');
             }
         }
-        light.append(" | seenIn=").append(seenIn).append(" samples=").append(samples);
+        light.append(" | seenIn=").append(seenIn).append(" samples=").append(samples).append(columns);
         return "chunks=" + chunks + " missing=" + missing + " blocks=" + blocks + (blockSamples.isEmpty() ? "" : " samples=" + blockSamples)
                 + " blockDiffs=" + blockDiffs + "\n" + light;
     }

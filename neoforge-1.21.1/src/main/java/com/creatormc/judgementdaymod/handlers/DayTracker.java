@@ -212,6 +212,7 @@ public class DayTracker {
         OreRetrofit.clear();
         Generator.clearPendingFalls();
         Generator.resetState();
+        ApocalypseDamageHandler.clear();
     }
 
     @SubscribeEvent
@@ -226,6 +227,7 @@ public class DayTracker {
         LightChecks.clear();
         OreRetrofit.clear();
         Generator.clearPendingFalls();
+        ApocalypseDamageHandler.clear();
     }
 
     public static void enqueueChunk(ChunkToProcess c) {

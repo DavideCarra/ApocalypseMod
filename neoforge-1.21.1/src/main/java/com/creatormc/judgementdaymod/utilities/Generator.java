@@ -19,6 +19,7 @@ import com.creatormc.judgementdaymod.setup.ModBlocks;
 import com.creatormc.judgementdaymod.utilities.ApocalypsePhases.Phase;
 
 import io.netty.util.internal.ThreadLocalRandom;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
@@ -499,11 +500,15 @@ public class Generator {
         // Track which sections were modified
         final boolean[] dirtySection = new boolean[sectionsCount];
         boolean hadChanges = false;
-        // Sky light checks of the changed blocks (shadows), queued below all at once.
-        // The block light is left as it always was (the fires lit here do not glow), and so
-        // is the light around those fires: they burn out within moments and vanilla checks
-        // their spot then, checking them now too would only double that light work.
-        final LightChecks lightChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, true);
+        // Light checks of the changed blocks, queued below all at once: the sky and block
+        // light around what replaced them. The fires lit here do not glow: they burn out
+        // within moments and vanilla checks their spot then, lighting them now would only
+        // double that light work. Only the sky light of their spot is checked: what burned
+        // no longer shades the column (a mob under burnt leaves is in the open)
+        final LightChecks lightChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, false);
+        final LightChecks fireChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, true);
+        // The fires lit here (see ChunkLightSync.firesLit)
+        LongArrayList fires = null;
         // A falling block left air behind: vanilla queued its light check
         boolean blockFell = false;
         // Catching up on several steps at once (step 0 never applies): the ash that falls
@@ -680,6 +685,8 @@ public class Generator {
                             // stays at the bottom, on what stopped it (none after the end). A
                             // column with nothing more to burn below is as before
                             int fireY = targetY;
+                            // Check of the lowest burnt block so far, held back: the fire may take its place
+                            BlockPos heldCheck = null;
                             if (burning) {
                                 for (int y = targetY - 1; y > minBuildHeight; y--) {
                                     final int s = (y >> 4) - minSection;
@@ -704,9 +711,13 @@ public class Generator {
                                     lastBurntBlocks++;
                                     // Its own update, top to bottom: the block on top may be one
                                     // that lets the light through (a vine), which updates nothing
+                                    if (heldCheck != null) {
+                                        lightChecks.add(heldCheck);
+                                        heldCheck = null;
+                                    }
                                     if (LightEngine.hasDifferentLightProperties(chunk, burnt, st, airState)) {
                                         chunk.getSkyLightSources().update(chunk, lx, y, lz);
-                                        lightChecks.add(burnt);
+                                        heldCheck = burnt;
                                     }
                                     fireY = y;
                                 }
@@ -723,7 +734,19 @@ public class Generator {
                                         final BlockPos firePos = new BlockPos(startX + lx, fireY, startZ + lz);
                                         sections[fireSec].setBlockState(lx, fireY & 15, lz, fireState, false);
                                         level.scheduleTick(firePos, fireBlock, 1);
+                                        // Its sky light only (it does not glow)
+                                        if (heldCheck != null) {
+                                            fireChecks.add(heldCheck);
+                                            heldCheck = null;
+                                        }
+                                        if (fires == null) {
+                                            fires = new LongArrayList();
+                                        }
+                                        fires.add(firePos.asLong());
                                     }
+                                }
+                                if (heldCheck != null) {
+                                    lightChecks.add(heldCheck);
                                 }
                             }
 
@@ -733,8 +756,17 @@ public class Generator {
                             searchFrom = fireY - 1;
 
                             // Light management (e.g. water or snow gone, ash in place of a slab)
-                            if (newBlock != fireBlock
-                                    && LightEngine.hasDifferentLightProperties(chunk, pos, oldState, newState)) {
+                            if (newBlock == fireBlock) {
+                                // The sky light only: the fire does not glow (see above)
+                                if (skyLightChanges(chunk, pos, oldState, newState)) {
+                                    chunk.getSkyLightSources().update(chunk, lx, targetY, lz);
+                                    fireChecks.add(pos);
+                                }
+                                if (fires == null) {
+                                    fires = new LongArrayList();
+                                }
+                                fires.add(pos.asLong());
+                            } else if (LightEngine.hasDifferentLightProperties(chunk, pos, oldState, newState)) {
                                 chunk.getSkyLightSources().update(chunk, lx, targetY, lz);
                                 lightChecks.add(pos);
                             }
@@ -824,9 +856,12 @@ public class Generator {
         }
 
         // Light checks queued: forward the final light to clients once computed
-        final boolean lightQueued = lightChecks.submit();
+        final boolean lightQueued = lightChecks.submit() | fireChecks.submit();
         if (lightQueued || blockFell) {
             ChunkLightSync.lightQueued(level, chunk.getPos().x, chunk.getPos().z);
+        }
+        if (fires != null) {
+            ChunkLightSync.firesLit(level, chunk.getPos().toLong(), fires);
         }
 
         return hadChanges;
@@ -845,6 +880,17 @@ public class Generator {
     /**
      * The chunk has snow or ice somewhere: their palettes tell at once.
      */
+    /**
+     * True if the sky light around the block changes when the new state replaces the old
+     * one: LightEngine.hasDifferentLightProperties without the light the blocks give off.
+     */
+    private static boolean skyLightChanges(BlockGetter level, BlockPos pos, BlockState oldState, BlockState newState) {
+        if (oldState == newState)
+            return false;
+        return oldState.getLightBlock(level, pos) != newState.getLightBlock(level, pos)
+                || oldState.useShapeForLightOcclusion() || newState.useShapeForLightOcclusion();
+    }
+
     private static boolean hasMeltable(LevelChunkSection[] sections) {
         for (LevelChunkSection section : sections) {
             if (section != null && !section.hasOnlyAir() && section.maybeHas(Analyzer::isMeltable)) {
@@ -913,7 +959,7 @@ public class Generator {
         if (!hasMeltable(sections))
             return;
         final boolean[] dirtySection = new boolean[sections.length];
-        final LightChecks lightChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, true);
+        final LightChecks lightChecks = new LightChecks(level, chunk.getPos().x, chunk.getPos().z, false);
         final Heightmap wsHM = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
         boolean changed = false;
         for (int lx = 0; lx < 16; lx++) {
@@ -1402,6 +1448,14 @@ public class Generator {
      * Sends chunk update to clients
      */
     static void updateClients(LevelChunk chunk, ServerLevel level) {
+        updateClients(chunk, level, null);
+    }
+
+    /**
+     * @param relit light sections the clients relit themselves since the processing, sent
+     *              again once the light settles (see ChunkLightSync.sentWhole)
+     */
+    static void updateClients(LevelChunk chunk, ServerLevel level, java.util.BitSet relit) {
         final ChunkPos chunkPos = chunk.getPos();
 
         // Players currently viewing this chunk
@@ -1428,6 +1482,8 @@ public class Generator {
                 });
             }
         }
+        // The light still being computed reaches them too
+        ChunkLightSync.sentWhole(level, chunkPos.x, chunkPos.z, relit);
     }
 
     /**
