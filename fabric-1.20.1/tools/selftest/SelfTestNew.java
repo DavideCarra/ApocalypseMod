@@ -347,7 +347,9 @@ public class SelfTestNew {
     static void heatShaft(ServerLevel level, net.minecraft.server.level.ServerPlayer open,
             net.minecraft.server.level.ServerPlayer closed) {
         int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, 0, 0);
-        for (int y = 19; y < top; y++)
+        // Two blocks above the surface: the spawn can be in water, and the water flowing back
+        // where the processing evaporated it would spill over a lower rim and cover the shaft
+        for (int y = 19; y < top + 2; y++)
             for (int dx = -1; dx <= 1; dx++)
                 for (int dz = -1; dz <= 1; dz++) {
                     boolean inside = dx == 0 && dz == 0 && y >= 20;
