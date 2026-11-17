@@ -1,0 +1,22 @@
+{
+    "required": true,
+    "minVersion": "0.8",
+    "package": "com.creatormc.judgementdaymod.events.mixin",
+    "compatibilityLevel": "JAVA_21",
+    "mixins": [
+        "ServerLevelMixin",
+        "ChunkGeneratorAccessor",
+        "ServerChunkCacheAccessor",
+        "ChunkMapAccessor",
+        "BeehiveDecoratorMixin",
+        "BeehiveBlockEntityMixin",
+        "MobMixin",
+        "NaturalSpawnerMixin",
+        "ChunkHolderMixin",
+        "BiomeMixin",
+        "EntityMixin"
+    ],
+    "injectors": {
+        "defaultRequire": 1
+    }
+}
