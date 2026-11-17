@@ -13,12 +13,16 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
+import it.unimi.dsi.fastutil.shorts.ShortSet;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.network.protocol.game.ClientboundLightUpdatePacket;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.util.thread.BlockableEventLoop;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -63,6 +67,11 @@ public final class ChunkLightSync {
         // The chunk was processed: send it again once the markers of its area are done
         boolean resend;
         long timeoutTick;
+        // Fires lit by the processing, which do not glow (see firesLit)
+        LongArrayList fires;
+        // Light sections around the block changes vanilla sent while the chunk waited to be
+        // sent again whole (see beforeBroadcast)
+        BitSet relit;
 
         Pending(ServerLevel level) {
             this.level = level;
@@ -92,6 +101,24 @@ public final class ChunkLightSync {
 
     // Neighbours of processed chunks whose light changes are collected
     private static final Long2ObjectOpenHashMap<Spill> spills = new Long2ObjectOpenHashMap<>();
+
+    private static final class FollowUp {
+        final ServerLevel level;
+        // Light sections changed since the chunk (or its neighbour) was sent again whole
+        final BitSet sky = new BitSet();
+        final BitSet block = new BitSet();
+        // Markers queued when they were sent, still out
+        int markers;
+        long timeoutTick;
+
+        FollowUp(ServerLevel level) {
+            this.level = level;
+        }
+    }
+
+    // Chunks sent again whole and their neighbours, whose light changes are collected until
+    // the light engine has computed the checks queued before they were sent (see followUp)
+    private static final Long2ObjectOpenHashMap<FollowUp> followUps = new Long2ObjectOpenHashMap<>();
     // Chunks lit and waiting to be sent again at the start of the next tick
     private static final LongArrayList lit = new LongArrayList();
     private static long tick = 0;
@@ -151,6 +178,61 @@ public final class ChunkLightSync {
         }
         p.resend = true;
         return true;
+    }
+
+    /**
+     * Fires that do not glow were lit in the chunk by its processing (see
+     * Generator.transformSurface): their light is not computed, the chunk sent again whole
+     * carries them dark.
+     */
+    public static void firesLit(ServerLevel level, long chunk, LongArrayList positions) {
+        final Pending p = pending.get(chunk);
+        if (p == null || p.level != level || p.markers == 0)
+            return;
+        if (p.fires == null)
+            p.fires = positions;
+        else
+            p.fires.addAll(positions);
+    }
+
+    /**
+     * Vanilla is about to send the block changes of the chunk (ChunkHolder.broadcastChanges)
+     * while it waits to be sent again whole. A client applies them to its copy of the chunk
+     * from before the processing and relights the blocks itself, sometimes only after the
+     * chunk sent again replaced that copy (it applies the light it is sent once per frame,
+     * after the blocks), next to neighbours not sent again yet: the light sections around the
+     * changes are sent again once the light settles (see sentWhole). The changes at the fires
+     * that do not glow are left out (the chunk sent again carries them): the client would
+     * compute the light of the fire and draw a glow the server does not have.
+     */
+    public static void beforeBroadcast(ServerLevel level, long chunk, ShortSet[] changed, LevelHeightAccessor heights) {
+        if (pending.isEmpty())
+            return;
+        final Pending p = pending.get(chunk);
+        if (p == null || !p.resend || p.level != level)
+            return;
+        // Light sections: one more below and above the block sections
+        for (int index = 0; index < changed.length; index++) {
+            if (changed[index] != null) {
+                if (p.relit == null)
+                    p.relit = new BitSet();
+                p.relit.set(index, index + 3);
+            }
+        }
+        if (p.fires == null)
+            return;
+        for (int i = 0; i < p.fires.size(); i++) {
+            final long fire = p.fires.getLong(i);
+            final int index = heights.getSectionIndex(BlockPos.getY(fire));
+            if (index < 0 || index >= changed.length)
+                continue;
+            final ShortSet set = changed[index];
+            if (set != null && set.remove((short) (SectionPos.sectionRelative(BlockPos.getX(fire)) << 8
+                    | SectionPos.sectionRelative(BlockPos.getZ(fire)) << 4 | SectionPos.sectionRelative(BlockPos.getY(fire))))
+                    && set.isEmpty()) {
+                changed[index] = null;
+            }
+        }
     }
 
     /**
@@ -266,21 +348,117 @@ public final class ChunkLightSync {
         if (!spills.isEmpty()) {
             sendSpills();
         }
+        if (!followUps.isEmpty()) {
+            sendFollowUps();
+        }
     }
 
     /**
      * Light section changes of a chunk (light engine notification, server thread).
      */
     public static void sectionLightChanged(ServerLevel level, long chunk, LightLayer layer, int sectionY) {
-        if (spills.isEmpty())
-            return;
-        final Spill s = spills.get(chunk);
-        if (s == null || s.level != level)
+        if (spills.isEmpty() && followUps.isEmpty())
             return;
         final int index = sectionY - level.getLightEngine().getMinLightSection();
         if (index < 0 || index >= level.getLightEngine().getLightSectionCount())
             return;
-        (layer == LightLayer.SKY ? s.sky : s.block).set(index);
+        final Spill s = spills.get(chunk);
+        if (s != null && s.level == level)
+            (layer == LightLayer.SKY ? s.sky : s.block).set(index);
+        final FollowUp f = followUps.get(chunk);
+        if (f != null && f.level == level)
+            (layer == LightLayer.SKY ? f.sky : f.block).set(index);
+    }
+
+    /**
+     * The chunk was just sent again whole, with the light the server has now. Blocks
+     * changed by vanilla since its processing (water flowing back, ash landing) may have
+     * light checks the light engine has not computed yet: vanilla tells only the players at
+     * the edge of their view distance about the light they change, the others got the new
+     * blocks inside the chunk and would never relight them. The light sections that change
+     * in the chunk and its neighbours until those checks are computed are sent to every player
+     * viewing them (see sendFollowUps).
+     */
+    public static void sentWhole(ServerLevel level, int chunkX, int chunkZ, BitSet relit) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                final long key = ChunkPos.asLong(chunkX + dx, chunkZ + dz);
+                FollowUp f = followUps.get(key);
+                if (f == null || f.level != level) {
+                    f = new FollowUp(level);
+                    followUps.put(key, f);
+                } else if (dx == 0 && dz == 0) {
+                    // Its light changes so far are in the chunk sent
+                    f.sky.clear();
+                    f.block.clear();
+                }
+                if (dx == 0 && dz == 0 && relit != null) {
+                    // The sections the clients relit themselves meanwhile
+                    f.sky.or(relit);
+                    f.block.or(relit);
+                }
+                f.markers++;
+                f.timeoutTick = tick + MARKER_TIMEOUT_TICKS;
+            }
+        }
+        LightChecks.afterLightFollowUp(level, chunkX, chunkZ);
+    }
+
+    /**
+     * The light checks queued before these chunks were sent again whole are computed. Their
+     * light change notifications are queued on the chunk source's own executor, ahead of this
+     * marker: the follow-ups end after them, on the same executor.
+     */
+    static void followUpsDone(ServerLevel level, long[] chunks) {
+        if (followUps.isEmpty() || chunks.length == 0)
+            return;
+        if (chunkExecutorAccess) {
+            try {
+                final BlockableEventLoop<Runnable> executor = level.getChunkSource().mainThreadProcessor;
+                executor.tell(() -> followUpsRun(level, chunks));
+                return;
+            } catch (LinkageError e) {
+                chunkExecutorAccess = false;
+                JudgementDayMod.LOGGER.warn("[Apocalypse] Chunk executor not accessible: " + e);
+            }
+        }
+        followUpsRun(level, chunks);
+    }
+
+    private static void followUpsRun(ServerLevel level, long[] chunks) {
+        for (long chunk : chunks) {
+            final int chunkX = ChunkPos.getX(chunk);
+            final int chunkZ = ChunkPos.getZ(chunk);
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    final FollowUp f = followUps.get(ChunkPos.asLong(chunkX + dx, chunkZ + dz));
+                    if (f != null && f.level == level && f.markers > 0)
+                        f.markers--;
+                }
+            }
+        }
+    }
+
+    /**
+     * Sends the light changed in the chunks sent again whole and their neighbours, once the
+     * checks queued before they were sent are computed (or not waited for any longer).
+     */
+    private static void sendFollowUps() {
+        ObjectIterator<Long2ObjectMap.Entry<FollowUp>> it = followUps.long2ObjectEntrySet().fastIterator();
+        while (it.hasNext()) {
+            Long2ObjectMap.Entry<FollowUp> entry = it.next();
+            final long key = entry.getLongKey();
+            final FollowUp f = entry.getValue();
+            if (f.markers > 0 && tick < f.timeoutTick)
+                continue;
+            if (!f.sky.isEmpty() || !f.block.isEmpty()) {
+                final Pending p = pending.get(key);
+                // Waiting to be sent whole: it gets this light with it
+                if (p == null || !p.resend || p.level != f.level)
+                    sendLight(f.level, key, f.sky, f.block);
+            }
+            it.remove();
+        }
     }
 
     /**
@@ -309,7 +487,7 @@ public final class ChunkLightSync {
                     // processed: its light comes in the same packet
                     s.until = Math.max(s.until, tick + SPILL_GRACE_TICKS);
                 } else {
-                    sendLight(s, key);
+                    sendLight(s.level, key, s.sky, s.block);
                     s.sky.clear();
                     s.block.clear();
                 }
@@ -336,9 +514,9 @@ public final class ChunkLightSync {
      * the edge of their view distance get them from vanilla too, unless they were not at
      * the edge when vanilla sent them: a light packet twice does no harm.
      */
-    private static void sendLight(Spill s, long key) {
+    private static void sendLight(ServerLevel level, long key, BitSet sky, BitSet block) {
         final ChunkPos pos = new ChunkPos(key);
-        final ChunkMap chunkMap = s.level.getChunkSource().chunkMap;
+        final ChunkMap chunkMap = level.getChunkSource().chunkMap;
         // Chunks are sent to the players once ticking (vanilla ignores the others too)
         if (holderAccess) {
             try {
@@ -353,8 +531,8 @@ public final class ChunkLightSync {
         final List<ServerPlayer> players = chunkMap.getPlayers(pos, false);
         if (players.isEmpty())
             return;
-        final ClientboundLightUpdatePacket packet = new ClientboundLightUpdatePacket(pos, s.level.getLightEngine(),
-                s.sky, s.block);
+        final ClientboundLightUpdatePacket packet = new ClientboundLightUpdatePacket(pos, level.getLightEngine(),
+                sky, block);
         for (ServerPlayer player : players) {
             player.connection.send(packet);
         }
@@ -413,7 +591,7 @@ public final class ChunkLightSync {
         LevelChunk chunk = p.level.getChunkSource().getChunkNow(pos.x, pos.z);
         if (chunk != null) {
             dropQueuedChanges(p.level, key);
-            Generator.updateClients(chunk, p.level);
+            Generator.updateClients(chunk, p.level, p.relit);
             // Sent whole: its light changes so far are in it
             final Spill s = spills.get(key);
             if (s != null && s.level == p.level) {
@@ -451,6 +629,7 @@ public final class ChunkLightSync {
         lit.clear();
         pending.clear();
         spills.clear();
+        followUps.clear();
         tick = 0;
         markersWork = true;
         lastMarkerTick = 0;

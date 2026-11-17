@@ -51,6 +51,7 @@ public class SelfTestNew {
     static final List<BlockPos> pools = new ArrayList<>();
     // Spot under the roof of each set of cows
     static final List<BlockPos> roofs = new ArrayList<>();
+    static final List<BlockPos> leafRoofs = new ArrayList<>();
     static int mobRound = 0;
     // round: {unloadDay, reloadDay, expectExposedRemoved}
     static final int[][] ROUNDS = { { 60, 63, 1 }, { 60, 60, 0 }, { 210, 230, 0 }, { 195, 230, 1 } };
@@ -302,7 +303,9 @@ public class SelfTestNew {
     static void heatShaft(ServerLevel level, net.minecraft.server.level.ServerPlayer open,
             net.minecraft.server.level.ServerPlayer closed) {
         int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, 0, 0);
-        for (int y = 19; y < top; y++)
+        // Two blocks above the surface: the spawn can be in water, and the water flowing back
+        // where the processing evaporated it would spill over a lower rim and cover the shaft
+        for (int y = 19; y < top + 2; y++)
             for (int dx = -1; dx <= 1; dx++)
                 for (int dz = -1; dz <= 1; dz++) {
                     boolean inside = dx == 0 && dz == 0 && y >= 20;
@@ -1257,13 +1260,14 @@ public class SelfTestNew {
         cows.clear();
         pools.clear();
         roofs.clear();
+        leafRoofs.clear();
         for (int i = 0; i < MOB_CHUNKS.length; i += 2) {
             int cx = MOB_CHUNKS[i], cz = MOB_CHUNKS[i + 1];
             level.setChunkForced(cx, cz, true);
             level.getChunk(cx, cz);
             int bx = (cx << 4) + 8, bz = (cz << 4) + 8;
             int top = Math.max(level.getHeight(Heightmap.Types.MOTION_BLOCKING, bx, bz), 70);
-            UUID[] ids = new UUID[5];
+            UUID[] ids = new UUID[6];
             // flat stone platform at top, open sky
             for (int dx = -7; dx <= 7; dx++)
                 for (int dz = -7; dz <= 7; dz++) {
@@ -1303,6 +1307,15 @@ public class SelfTestNew {
                                 inside ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState(), 2);
                     }
             ids[4] = spawnCow(level, new BlockPos(bx - 5, 20, bz + 5));
+            // under leaves: in the open once they burned when the chunk catches up (1.3.5: the
+            // sky light under a fire lit by the processing is checked)
+            BlockPos leafy = new BlockPos(bx, top, bz - 5);
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dz = -1; dz <= 1; dz++)
+                    level.setBlock(leafy.offset(dx, 3, dz), Blocks.OAK_LEAVES.defaultBlockState()
+                            .setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT, true), 2);
+            ids[5] = spawnCow(level, leafy);
+            leafRoofs.add(leafy);
             cows.add(ids);
         }
     }
@@ -1334,13 +1347,18 @@ public class SelfTestNew {
             BlockPos roof = roofs.get(c);
             boolean roofGone = level.getBlockState(roof.above(3)).isAir() && level.getBlockState(roof.above(2)).isAir()
                     && level.getBlockState(roof.above()).isAir();
-            safeExpected += 3 - (removeExpected && dry ? 1 : 0) - (removeExpected && roofGone ? 1 : 0);
-            for (int i = 1; i < 4; i++)
-                if (level.getEntity(ids[i]) != null)
+            // The leaves burn when the chunk catches up: in the open then (1.3.5)
+            boolean leavesGone = !level.getBlockState(leafRoofs.get(c).above(3)).is(net.minecraft.tags.BlockTags.LEAVES);
+            safeExpected += 4 - (removeExpected && dry ? 1 : 0) - (removeExpected && roofGone ? 1 : 0)
+                    - (removeExpected && leavesGone ? 1 : 0);
+            for (int i = 1; i < 6; i++)
+                if (i != 4 && level.getEntity(ids[i]) != null)
                     safeAlive++;
             SelfTestCommon.log("DEBUG set " + c + " alive=" + (level.getEntity(ids[0]) != null) + "," + (level.getEntity(ids[1]) != null)
                     + "," + (level.getEntity(ids[2]) != null) + "," + (level.getEntity(ids[3]) != null)
                     + " shaft=" + (level.getEntity(ids[4]) != null) + " poolDry=" + dry
+                    + " leaves=" + (level.getEntity(ids[5]) != null) + " leavesGone=" + leavesGone + " leafRoof="
+                    + level.getBlockState(leafRoofs.get(c).above(3)).getBlock()
                     + " roofGone=" + roofGone + " roof=" + level.getBlockState(roof.above(3)).getBlock() + "/"
                     + level.getBlockState(roof.above(2)).getBlock() + "/" + level.getBlockState(roof.above()).getBlock()
                     + "/" + level.getBlockState(roof).getBlock());
