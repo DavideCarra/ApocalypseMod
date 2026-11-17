@@ -1,0 +1,59 @@
+plugins {
+    id 'fabric-loom' version "${loom_version}"
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    // The Forge jar's name, plus the loader
+    archivesName = "${mod_id}-fabric"
+}
+
+// Mojang ships Java 17 to end users in 1.20.1
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+loom {
+    // Opens the members of the light engine and the chunk holders used by the mod (as the
+    // access transformer of the Forge version)
+    accessWidenerPath = file('src/main/resources/judgementday.accesswidener')
+
+    runs {
+        configureEach {
+            runDir = 'run'
+        }
+        server {
+            server()
+        }
+    }
+}
+
+repositories {
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    // @Nonnull annotations of the shared sources (Forge ships them)
+    compileOnly "com.google.code.findbugs:jsr305:3.0.2"
+}
+
+processResources {
+    var replaceProperties = [
+            minecraft_version: minecraft_version, loader_version: loader_version, fabric_version: fabric_version,
+            mod_id: mod_id, mod_name: mod_name, mod_license: mod_license, mod_version: mod_version,
+    ]
+    inputs.properties replaceProperties
+    filesMatching(['fabric.mod.json', 'pack.mcmeta']) {
+        expand replaceProperties
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
