@@ -21,5 +21,6 @@ public class ClientPlayerEventHandler {
         // The next world or server sends its own state
         ClientApocalypseData.reset();
         ClientHeatData.set(0f);
+        PhaseTitleOverlay.clear();
     }
 }

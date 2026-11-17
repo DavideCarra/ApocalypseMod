@@ -192,6 +192,15 @@ public class ApocalypseDamageHandler {
         heatLevels.remove(id);
     }
 
+    /**
+     * Forgets every heat: a world starts without the heat of the one played before (in
+     * single player the game goes on from one world to the next).
+     */
+    public static void clear() {
+        heatLevels.clear();
+        tickCounter = 0;
+    }
+
     @SubscribeEvent
     public static void onEntityDeath(LivingDeathEvent event) {
         LivingEntity entity = event.getEntity();
